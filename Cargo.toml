@@ -1,0 +1,3 @@
+[workspace]
+members = ["analysis", "cli"]
+resolver = "2"
