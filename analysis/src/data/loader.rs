@@ -57,12 +57,13 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
 
     // Process each result
     for received in &bws_data.received_data {
-        // Skip passed out or invalid results
-        if received.contract.is_empty() || received.contract.to_uppercase() == "PASS" {
+        // Skip only truly empty results (no contract data at all)
+        if received.contract.is_empty() {
             continue;
         }
 
         let board_number = received.board as u32;
+        let is_passout = received.contract.to_uppercase() == "PASS";
 
         // In pairs games with movement, NS and EW pairs come from different home tables
         // pair_ns = the table number where the NS pair is stationed
@@ -70,25 +71,23 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
         let ns_table = received.pair_ns;
         let ew_table = received.pair_ew;
 
-        // Get player names - NS from their home table, EW from their home table
+        // Get player names - use placeholder if missing from BWS
         let n_name = player_lookup
             .get(&(received.section, ns_table, "N".to_string()))
-            .cloned();
+            .cloned()
+            .unwrap_or_else(|| format!("Player N-{}", ns_table));
         let s_name = player_lookup
             .get(&(received.section, ns_table, "S".to_string()))
-            .cloned();
+            .cloned()
+            .unwrap_or_else(|| format!("Player S-{}", ns_table));
         let e_name = player_lookup
             .get(&(received.section, ew_table, "E".to_string()))
-            .cloned();
+            .cloned()
+            .unwrap_or_else(|| format!("Player E-{}", ew_table));
         let w_name = player_lookup
             .get(&(received.section, ew_table, "W".to_string()))
-            .cloned();
-
-        // Skip if we don't have player names
-        let (n_name, s_name, e_name, w_name) = match (n_name, s_name, e_name, w_name) {
-            (Some(n), Some(s), Some(e), Some(w)) => (n, s, e, w),
-            _ => continue,
-        };
+            .cloned()
+            .unwrap_or_else(|| format!("Player W-{}", ew_table));
 
         // Get ACBL numbers if available
         let n_acbl = acbl_lookup.get(&n_name).cloned();
@@ -106,48 +105,68 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
         let ns_pair = Partnership::new(n_id.clone(), s_id.clone());
         let ew_pair = Partnership::new(e_id.clone(), w_id.clone());
 
-        // Parse declarer direction
-        let declarer_direction = parse_declarer_direction(received.declarer, &received.ns_ew);
+        if is_passout {
+            // Pass-out: score is 0, no declarer or contract
+            let result = BoardResult {
+                board_number,
+                section: received.section,
+                table: received.table,
+                round: received.round,
+                ns_pair,
+                ew_pair,
+                declarer_direction: Direction::North, // placeholder - not meaningful
+                declarer: n_id,                       // placeholder - not meaningful
+                contract: None,
+                tricks_relative: None,
+                ns_score: 0,
+                lead_card: None,
+            };
+            game_data.results.push(result);
+        } else {
+            // Parse declarer direction
+            let declarer_direction =
+                parse_declarer_direction(received.declarer, &received.ns_ew);
 
-        // Get declarer player ID
-        let declarer = match declarer_direction {
-            Direction::North => n_id,
-            Direction::South => s_id,
-            Direction::East => e_id,
-            Direction::West => w_id,
-        };
+            // Get declarer player ID
+            let declarer = match declarer_direction {
+                Direction::North => n_id,
+                Direction::South => s_id,
+                Direction::East => e_id,
+                Direction::West => w_id,
+            };
 
-        // Parse contract
-        let contract = ParsedContract::parse(&received.contract);
+            // Parse contract
+            let contract = ParsedContract::parse(&received.contract);
 
-        // Parse result
-        let tricks_relative = Contract::parse_result(&received.result);
+            // Parse result
+            let tricks_relative = Contract::parse_result(&received.result);
 
-        // Calculate score
-        let ns_score = calculate_ns_score(
-            &contract,
-            tricks_relative,
-            declarer_direction,
-            board_number,
-            &game_data.boards,
-        );
+            // Calculate score
+            let ns_score = calculate_ns_score(
+                &contract,
+                tricks_relative,
+                declarer_direction,
+                board_number,
+                &game_data.boards,
+            );
 
-        let result = BoardResult {
-            board_number,
-            section: received.section,
-            table: received.table,
-            round: received.round,
-            ns_pair,
-            ew_pair,
-            declarer_direction,
-            declarer,
-            contract,
-            tricks_relative,
-            ns_score,
-            lead_card: received.lead_card.clone(),
-        };
+            let result = BoardResult {
+                board_number,
+                section: received.section,
+                table: received.table,
+                round: received.round,
+                ns_pair,
+                ew_pair,
+                declarer_direction,
+                declarer,
+                contract,
+                tricks_relative,
+                ns_score,
+                lead_card: received.lead_card.clone(),
+            };
 
-        game_data.results.push(result);
+            game_data.results.push(result);
+        }
     }
 
     Ok(game_data)

@@ -159,11 +159,15 @@ pub fn analyze_player(data: &GameData, player_name: &str) -> Option<PlayerAnalys
         // Build result string
         let result_str = build_result_string(result);
 
-        // Check if player declared
-        let was_declarer = result.declarer == player_id;
+        // Check if player declared (pass-outs have no real declarer)
+        let is_passout = result.contract.is_none();
+        let was_declarer = !is_passout && result.declarer == player_id;
 
         // Determine player's role and track matchpoints by role
-        let role = if was_declarer {
+        let role = if is_passout {
+            // Pass-out: no one declared, treat as defender for stats
+            PlayerRole::Defender
+        } else if was_declarer {
             PlayerRole::Declarer
         } else if result.declaring_direction() == direction {
             // Partner declared (player is dummy)
@@ -174,7 +178,9 @@ pub fn analyze_player(data: &GameData, player_name: &str) -> Option<PlayerAnalys
         };
 
         // Determine player's specific seat (N/E/S/W) when possible
-        let seat = if was_declarer {
+        let seat = if is_passout {
+            None
+        } else if was_declarer {
             // Player declared, so we know their exact seat
             Some(result.declarer_direction)
         } else if role == PlayerRole::Dummy {
