@@ -1,5 +1,5 @@
-mod player;
 mod partnership;
+mod player;
 
-pub use player::{normalize_name, Player, PlayerId, PlayerRegistry};
 pub use partnership::{Partnership, PartnershipDirection};
+pub use player::{normalize_name, Player, PlayerId, PlayerRegistry};

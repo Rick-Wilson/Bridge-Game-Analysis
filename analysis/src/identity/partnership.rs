@@ -31,23 +31,51 @@ impl std::fmt::Display for PartnershipDirection {
 /// A partnership (two players playing together)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Partnership {
-    /// First player (alphabetically by canonical name)
+    /// First player (alphabetically by canonical name, for consistent Eq/Hash)
     pub player1: PlayerId,
-    /// Second player (partner)
+    /// Second player (alphabetically by canonical name)
     pub player2: PlayerId,
+    /// Whether player1 should be displayed first.
+    /// When false, display order is reversed from alphabetical (player2 first).
+    /// Used for ACBL seat ordering: N-S pairs show North first, E-W pairs show West first.
+    #[serde(skip)]
+    player1_displays_first: bool,
 }
 
 impl Partnership {
-    /// Create a new partnership with consistent ordering
+    /// Create a new partnership with consistent ordering (alphabetical display)
     pub fn new(p1: PlayerId, p2: PlayerId) -> Self {
         // Order by canonical name for consistent hashing/comparison
         if p1.canonical_name <= p2.canonical_name {
             Self {
                 player1: p1,
                 player2: p2,
+                player1_displays_first: true,
             }
         } else {
             Self {
+                player1: p2,
+                player2: p1,
+                player1_displays_first: true,
+            }
+        }
+    }
+
+    /// Create a new partnership with seat-based display ordering.
+    ///
+    /// `display_first` is the player that should appear first in display output
+    /// (North for N-S pairs, West for E-W pairs).
+    /// Internal storage remains alphabetically sorted for consistent Eq/Hash.
+    pub fn new_seated(p1: PlayerId, p2: PlayerId, display_first: &PlayerId) -> Self {
+        if p1.canonical_name <= p2.canonical_name {
+            Self {
+                player1_displays_first: p1 == *display_first,
+                player1: p1,
+                player2: p2,
+            }
+        } else {
+            Self {
+                player1_displays_first: p2 == *display_first,
                 player1: p2,
                 player2: p1,
             }
@@ -59,12 +87,30 @@ impl Partnership {
         &self.player1 == player || &self.player2 == player
     }
 
-    /// Get display name for the partnership
+    /// Get the player displayed first (seat-based: N for N-S, W for E-W)
+    pub fn first_player(&self) -> &PlayerId {
+        if self.player1_displays_first {
+            &self.player1
+        } else {
+            &self.player2
+        }
+    }
+
+    /// Get the player displayed second (seat-based: S for N-S, E for E-W)
+    pub fn second_player(&self) -> &PlayerId {
+        if self.player1_displays_first {
+            &self.player2
+        } else {
+            &self.player1
+        }
+    }
+
+    /// Get display name for the partnership in seat order (short format: "First L. - First L.")
     pub fn display_name(&self) -> String {
         format!(
             "{} - {}",
-            self.player1.display_name(),
-            self.player2.display_name()
+            self.first_player().short_name(),
+            self.second_player().short_name()
         )
     }
 }

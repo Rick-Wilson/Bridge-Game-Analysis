@@ -51,6 +51,27 @@ impl PlayerId {
             .collect::<Vec<_>>()
             .join(" ")
     }
+
+    /// Get a short display name: "First L." (first name + last initial)
+    pub fn short_name(&self) -> String {
+        let words: Vec<&str> = self.canonical_name.split_whitespace().collect();
+        if words.len() < 2 {
+            return self.display_name();
+        }
+        let first = {
+            let mut chars = words[0].chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().chain(chars).collect(),
+            }
+        };
+        let last_initial = words
+            .last()
+            .and_then(|w| w.chars().next())
+            .map(|c| c.to_uppercase().to_string())
+            .unwrap_or_default();
+        format!("{} {}.", first, last_initial)
+    }
 }
 
 impl PartialEq for PlayerId {

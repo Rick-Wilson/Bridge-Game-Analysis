@@ -1,5 +1,7 @@
 use crate::identity::{Partnership, PartnershipDirection, PlayerId, PlayerRegistry};
-use bridge_parsers::{Board, Contract, Deal, Direction, Doubled, Hand, Strain, Suit, Vulnerability};
+use bridge_parsers::{
+    Board, Contract, Deal, Direction, Doubled, Hand, Strain, Suit, Vulnerability,
+};
 use std::collections::HashMap;
 
 /// A parsed contract with all relevant information
@@ -153,7 +155,13 @@ impl BoardData {
 
         let lin = format!(
             "{}md|{}{},{},{},|sv|{}|ah|Board+{}|{}",
-            pn_section, dealer_digit, south_hand, west_hand, north_hand, vul_str, self.number,
+            pn_section,
+            dealer_digit,
+            south_hand,
+            west_hand,
+            north_hand,
+            vul_str,
+            self.number,
             bidding_section
         );
 
@@ -183,15 +191,15 @@ pub struct ContractResult {
 }
 
 impl SeatPlayers {
-    /// Create from NS and EW partnerships
-    /// Note: We don't know exactly who sat where within a partnership,
-    /// so we use player1 for N/E and player2 for S/W
+    /// Create from NS and EW partnerships using seat-based ordering.
+    /// NS pair: first_player() = North, second_player() = South.
+    /// EW pair: first_player() = West, second_player() = East.
     pub fn from_partnerships(ns_pair: &Partnership, ew_pair: &Partnership) -> Self {
         Self {
-            north: ns_pair.player1.display_name(),
-            south: ns_pair.player2.display_name(),
-            east: ew_pair.player1.display_name(),
-            west: ew_pair.player2.display_name(),
+            north: ns_pair.first_player().display_name(),
+            south: ns_pair.second_player().display_name(),
+            west: ew_pair.first_player().display_name(),
+            east: ew_pair.second_player().display_name(),
         }
     }
 }
@@ -317,7 +325,7 @@ impl BoardResult {
         let contract = self.contract.as_ref()?;
         let relative = self.tricks_relative?;
         let made = contract.level as i32 + 6 + relative;
-        Some(made.max(0).min(13) as u8)
+        Some(made.clamp(0, 13) as u8)
     }
 }
 

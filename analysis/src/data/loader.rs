@@ -1,6 +1,6 @@
 use crate::data::types::{BoardData, BoardResult, GameData, ParsedContract};
 use crate::error::{AnalysisError, Result};
-use crate::identity::{Partnership, PlayerId};
+use crate::identity::Partnership;
 use bridge_parsers::bws::{read_bws, BwsData};
 use bridge_parsers::pbn::read_pbn;
 use bridge_parsers::{Board, Contract, Direction};
@@ -42,9 +42,10 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
     // Add any boards from BWS that aren't in PBN
     for board in &bws_data.boards {
         if let Some(num) = board.number {
-            if !game_data.boards.contains_key(&num) {
-                game_data.boards.insert(num, BoardData::from_board(board));
-            }
+            game_data
+                .boards
+                .entry(num)
+                .or_insert_with(|| BoardData::from_board(board));
         }
     }
 
@@ -101,9 +102,10 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
         let e_id = game_data.players.get_or_create(&e_name, e_acbl);
         let w_id = game_data.players.get_or_create(&w_name, w_acbl);
 
-        // Create partnerships
-        let ns_pair = Partnership::new(n_id.clone(), s_id.clone());
-        let ew_pair = Partnership::new(e_id.clone(), w_id.clone());
+        // Create partnerships with seat-based display ordering
+        // NS pairs: North displayed first; EW pairs: West displayed first
+        let ns_pair = Partnership::new_seated(n_id.clone(), s_id.clone(), &n_id);
+        let ew_pair = Partnership::new_seated(e_id.clone(), w_id.clone(), &w_id);
 
         if is_passout {
             // Pass-out: score is 0, no declarer or contract
@@ -124,8 +126,7 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
             game_data.results.push(result);
         } else {
             // Parse declarer direction
-            let declarer_direction =
-                parse_declarer_direction(received.declarer, &received.ns_ew);
+            let declarer_direction = parse_declarer_direction(received.declarer, &received.ns_ew);
 
             // Get declarer player ID
             let declarer = match declarer_direction {
@@ -179,10 +180,7 @@ fn build_player_lookup(bws_data: &BwsData) -> HashMap<(i32, i32, String), String
     for pn in &bws_data.player_numbers {
         if let Some(ref name) = pn.name {
             if !name.is_empty() {
-                lookup.insert(
-                    (pn.section, pn.table, pn.direction.clone()),
-                    name.clone(),
-                );
+                lookup.insert((pn.section, pn.table, pn.direction.clone()), name.clone());
             }
         }
     }
@@ -258,7 +256,10 @@ fn calculate_ns_score(
     }
 }
 
-trait DirectionExt {
+/// Extension trait for converting Direction to char
+#[allow(dead_code)]
+pub(crate) trait DirectionExt {
+    /// Returns the single-character representation of this direction
     fn to_char(&self) -> char;
 }
 

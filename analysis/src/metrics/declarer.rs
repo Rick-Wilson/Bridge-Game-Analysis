@@ -186,6 +186,7 @@ fn compute_declarer_performance(
 }
 
 /// Analyze declarer performance for a specific player
+#[allow(dead_code)]
 pub fn analyze_player_declarer_performance(
     data: &GameData,
     player_name: &str,

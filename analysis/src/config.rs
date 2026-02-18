@@ -35,8 +35,9 @@ impl Config {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        let contents = toml::to_string_pretty(self)
-            .map_err(|e| AnalysisError::ConfigError(format!("Failed to serialize config: {}", e)))?;
+        let contents = toml::to_string_pretty(self).map_err(|e| {
+            AnalysisError::ConfigError(format!("Failed to serialize config: {}", e))
+        })?;
         std::fs::write(&path, contents)?;
         Ok(())
     }

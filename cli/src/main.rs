@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use bridge_club_analysis::{
-    analyze_bidding_performance, analyze_declarer_performance, analyze_player, load_game_data,
-    normalize_name, Config, ContractResult, Direction, GameData, PartnershipDirection, ResultCause,
-    SeatPlayers,
+    analyze_bidding_performance, analyze_board, analyze_declarer_performance, analyze_player,
+    load_game_data, normalize_name, Config, ContractResult, Direction, GameData,
+    PartnershipDirection, ResultCause, SeatPlayers,
 };
 use clap::{Parser, Subcommand};
 use colored::Colorize;
@@ -113,6 +113,25 @@ enum Commands {
         event_id: Option<String>,
     },
 
+    /// Analyze a specific board across all tables
+    Board {
+        /// BWS file with game results (defaults to .bws extension)
+        #[arg(long)]
+        bws: PathBuf,
+
+        /// PBN file with hand records (defaults to BWS path with .pbn extension)
+        #[arg(long)]
+        pbn: Option<PathBuf>,
+
+        /// Board number to analyze
+        #[arg(long)]
+        board: u32,
+
+        /// ACBL event ID for hyperlinks (e.g., 1380198)
+        #[arg(long)]
+        event_id: Option<String>,
+    },
+
     /// List all players in the game
     Players {
         /// BWS file with game results (defaults to .bws extension)
@@ -190,8 +209,8 @@ fn main() -> Result<()> {
             } else {
                 None
             };
-            let data = load_game_data(&bws_path, pbn_opt, mp_url)
-                .context("Failed to load game data")?;
+            let data =
+                load_game_data(&bws_path, pbn_opt, mp_url).context("Failed to load game data")?;
 
             cmd_declarer(&data, player.as_deref())?;
         }
@@ -227,23 +246,41 @@ fn main() -> Result<()> {
             } else {
                 None
             };
-            let data = load_game_data(&bws_path, pbn_opt, mp_url)
-                .context("Failed to load game data")?;
+            let data =
+                load_game_data(&bws_path, pbn_opt, mp_url).context("Failed to load game data")?;
 
             cmd_report(&data, event_id.as_deref())?;
         }
 
+        Commands::Board {
+            bws,
+            pbn,
+            board,
+            event_id,
+        } => {
+            let bws_path = resolve_bws_path(&bws);
+            let pbn_path = resolve_pbn_path(pbn.as_deref(), &bws_path);
+
+            let pbn_opt = if pbn_path.exists() {
+                Some(pbn_path.as_path())
+            } else {
+                None
+            };
+            let data =
+                load_game_data(&bws_path, pbn_opt, None).context("Failed to load game data")?;
+
+            cmd_board(&data, board, event_id.as_deref())?;
+        }
+
         Commands::Players { bws } => {
             let bws_path = resolve_bws_path(&bws);
-            let data =
-                load_game_data(&bws_path, None, None).context("Failed to load game data")?;
+            let data = load_game_data(&bws_path, None, None).context("Failed to load game data")?;
             cmd_players(&data)?;
         }
 
         Commands::Partnerships { bws } => {
             let bws_path = resolve_bws_path(&bws);
-            let data =
-                load_game_data(&bws_path, None, None).context("Failed to load game data")?;
+            let data = load_game_data(&bws_path, None, None).context("Failed to load game data")?;
             cmd_partnerships(&data)?;
         }
     }
@@ -252,14 +289,15 @@ fn main() -> Result<()> {
 }
 
 /// Color a value based on whether it's positive, negative, or neutral
+#[allow(dead_code)]
 fn color_value(value: f64, format_str: &str) -> String {
-    let formatted = format!("{}", format_str);
+    let formatted = format_str.to_string();
     if value > 0.01 {
         formatted.green().to_string()
     } else if value < -0.01 {
         formatted.red().to_string()
     } else {
-        formatted.to_string()
+        formatted
     }
 }
 
@@ -315,7 +353,8 @@ fn cmd_player(data: &GameData, player_name: &str, event_id: Option<&str>) -> Res
             println!("{}", "-------".cyan());
 
             // Collect unique partners and seats
-            let mut partners: Vec<String> = analysis.board_results
+            let mut partners: Vec<String> = analysis
+                .board_results
                 .iter()
                 .map(|br| br.partner.display_name())
                 .collect();
@@ -324,7 +363,8 @@ fn cmd_player(data: &GameData, player_name: &str, event_id: Option<&str>) -> Res
             let partner_str = partners.join(", ");
 
             // Collect known seats (from boards where player declared or was dummy)
-            let mut seats: Vec<Direction> = analysis.board_results
+            let mut seats: Vec<Direction> = analysis
+                .board_results
                 .iter()
                 .filter_map(|br| br.seat)
                 .collect();
@@ -337,12 +377,19 @@ fn cmd_player(data: &GameData, player_name: &str, event_id: Option<&str>) -> Res
             seats.dedup();
             let seat_str = if seats.is_empty() {
                 // Fall back to partnership direction if no specific seat known
-                let ns_count = analysis.board_results.iter()
+                let ns_count = analysis
+                    .board_results
+                    .iter()
                     .filter(|br| br.direction == PartnershipDirection::NorthSouth)
                     .count();
-                if ns_count > 0 { "North-South".to_string() } else { "East-West".to_string() }
+                if ns_count > 0 {
+                    "North-South".to_string()
+                } else {
+                    "East-West".to_string()
+                }
             } else {
-                seats.iter()
+                seats
+                    .iter()
                     .map(|d| match d {
                         Direction::North => "North",
                         Direction::East => "East",
@@ -415,10 +462,7 @@ fn cmd_player(data: &GameData, player_name: &str, event_id: Option<&str>) -> Res
                 };
                 println!("Declarer vs field: {}", decl_color);
             }
-            println!(
-                "Field contract:   {:.1}%",
-                analysis.field_contract_pct
-            );
+            println!("Field contract:   {:.1}%", analysis.field_contract_pct);
             println!();
 
             // Board-by-board results
@@ -483,26 +527,26 @@ fn cmd_player(data: &GameData, player_name: &str, event_id: Option<&str>) -> Res
                 // Create board number with hyperlink to BBO hand viewer
                 let board_display = if let Some(board_data) = data.boards.get(&br.board_number) {
                     // Find the original BoardResult to get player names and contract
-                    let board_result = data
-                        .results
-                        .iter()
-                        .find(|r| {
-                            r.board_number == br.board_number
-                                && (r.ns_pair.contains(&analysis.player)
-                                    || r.ew_pair.contains(&analysis.player))
-                        });
+                    let board_result = data.results.iter().find(|r| {
+                        r.board_number == br.board_number
+                            && (r.ns_pair.contains(&analysis.player)
+                                || r.ew_pair.contains(&analysis.player))
+                    });
 
                     let seat_players = board_result
                         .map(|r| SeatPlayers::from_partnerships(&r.ns_pair, &r.ew_pair));
 
                     // Build contract result for URL
-                    let contract_result = board_result
-                        .and_then(|r| r.contract.as_ref().map(|c| ContractResult {
+                    let contract_result = board_result.and_then(|r| {
+                        r.contract.as_ref().map(|c| ContractResult {
                             contract: c.clone(),
                             declarer: r.declarer_direction,
-                        }));
+                        })
+                    });
 
-                    if let Some(url) = board_data.bbo_handviewer_url(seat_players.as_ref(), contract_result.as_ref()) {
+                    if let Some(url) = board_data
+                        .bbo_handviewer_url(seat_players.as_ref(), contract_result.as_ref())
+                    {
                         hyperlink(&url, &format!("{:>5}", br.board_number))
                     } else {
                         format!("{:>5}", br.board_number)
@@ -511,15 +555,7 @@ fn cmd_player(data: &GameData, player_name: &str, event_id: Option<&str>) -> Res
                     format!("{:>5}", br.board_number)
                 };
 
-                // Format cause with color
-                let cause_str = match br.cause {
-                    ResultCause::Good => format!("{:>8}", "Good").green().to_string(),
-                    ResultCause::Lucky => format!("{:>8}", "Lucky").cyan().to_string(),
-                    ResultCause::Play => format!("{:>8}", "Play").yellow().to_string(),
-                    ResultCause::Defense => format!("{:>8}", "Defense").yellow().to_string(),
-                    ResultCause::Auction => format!("{:>8}", "Auction").magenta().to_string(),
-                    ResultCause::Unlucky => format!("{:>8}", "Unlucky").red().to_string(),
-                };
+                let cause_str = format_cause(br.cause);
 
                 println!(
                     "{} {:>7} {:>8} {} {} {} {} {} {}",
@@ -557,6 +593,122 @@ fn cmd_player(data: &GameData, player_name: &str, event_id: Option<&str>) -> Res
     }
 
     Ok(())
+}
+
+fn cmd_board(data: &GameData, board_number: u32, event_id: Option<&str>) -> Result<()> {
+    let analysis = analyze_board(data, board_number);
+
+    match analysis {
+        None => {
+            println!("{}", format!("Board {} not found.", board_number).red());
+            return Ok(());
+        }
+        Some(analysis) => {
+            println!(
+                "{} {}",
+                "Board Analysis:".cyan().bold(),
+                format!("Board {}", analysis.board_number).white().bold()
+            );
+            println!("{}", "=".repeat(50).cyan());
+
+            // Show event link if event_id provided
+            if let Some(eid) = event_id {
+                let url = board_url(eid, board_number);
+                println!("{}", hyperlink(&url, "View board on ACBL").cyan());
+            }
+
+            if let Some(field) = &analysis.field_contract {
+                println!("Field contract: {}", field.display().white().bold());
+            }
+            println!();
+
+            // Header
+            println!(
+                " {:<24} {:>8}  {:>7}  {:>7}  {:>8}  {}",
+                "Pair".bold(),
+                "Contract".bold(),
+                "Score".bold(),
+                "MP%".bold(),
+                "Cause".bold(),
+                "Notes".bold(),
+            );
+            println!(
+                " {:-<24} {:->8}  {:->7}  {:->7}  {:->8}  {:->20}",
+                "", "", "", "", "", ""
+            );
+
+            for tr in &analysis.results {
+                let ns_score = tr.ns_score;
+                let ew_score = -tr.ns_score;
+
+                // Determine which side declared for display
+                let declaring_ns =
+                    matches!(tr.declarer_direction, Direction::North | Direction::South);
+
+                // NS line (first): show contract if NS declared
+                let ns_contract = if declaring_ns {
+                    format!("{:>8}", tr.result_str)
+                } else {
+                    format!("{:>8}", "")
+                };
+
+                let ns_cause = format_cause(tr.ns_analysis.cause);
+                let ns_pair_name = truncate(&tr.ns_pair.display_name(), 24);
+
+                println!(
+                    " {:<24} {}  {}  {}  {}  {}",
+                    ns_pair_name,
+                    ns_contract,
+                    color_score(ns_score),
+                    color_mp(tr.ns_analysis.matchpoint_pct),
+                    ns_cause,
+                    tr.ns_analysis.notes,
+                );
+
+                // EW line (second): show contract if EW declared
+                let ew_contract = if !declaring_ns {
+                    format!("{:>8}", tr.result_str)
+                } else {
+                    format!("{:>8}", "")
+                };
+
+                let ew_cause = format_cause(tr.ew_analysis.cause);
+                let ew_pair_name = truncate(&tr.ew_pair.display_name(), 24);
+
+                println!(
+                    " {:<24} {}  {}  {}  {}  {}",
+                    ew_pair_name,
+                    ew_contract,
+                    color_score(ew_score),
+                    color_mp(tr.ew_analysis.matchpoint_pct),
+                    ew_cause,
+                    tr.ew_analysis.notes,
+                );
+
+                // Separator between table results
+                println!();
+            }
+
+            println!(
+                "{}",
+                "Cause: Good=skill, Lucky=opp error, Play=declarer, Defense=defense, Auction=bidding, Unlucky=bad luck".dimmed()
+            );
+        }
+    }
+
+    Ok(())
+}
+
+/// Format a cause with color
+fn format_cause(cause: ResultCause) -> String {
+    match cause {
+        ResultCause::Good => format!("{:>8}", "Good").green().to_string(),
+        ResultCause::Lucky => format!("{:>8}", "Lucky").cyan().to_string(),
+        ResultCause::Play => format!("{:>8}", "Play").yellow().to_string(),
+        ResultCause::Defense => format!("{:>8}", "Defense").yellow().to_string(),
+        ResultCause::Auction => format!("{:>8}", "Auction").magenta().to_string(),
+        ResultCause::Unlucky => format!("{:>8}", "Unlucky").red().to_string(),
+    }
 }
 
 fn cmd_declarer(data: &GameData, player_filter: Option<&str>) -> Result<()> {
@@ -782,7 +934,7 @@ fn cmd_players(data: &GameData) -> Result<()> {
     println!("{}\n", "=".repeat(15).cyan());
 
     let mut players: Vec<_> = data.players.all_players().collect();
-    players.sort_by(|a, b| a.display_name().cmp(&b.display_name()));
+    players.sort_by_key(|a| a.display_name());
 
     for player in players {
         println!("{}", player.display_name());
@@ -801,7 +953,7 @@ fn cmd_partnerships(data: &GameData) -> Result<()> {
     println!("{}\n", "=".repeat(20).cyan());
 
     let mut partnerships = data.partnerships();
-    partnerships.sort_by(|a, b| a.display_name().cmp(&b.display_name()));
+    partnerships.sort_by_key(|a| a.display_name());
 
     for partnership in &partnerships {
         println!("{}", partnership.display_name());

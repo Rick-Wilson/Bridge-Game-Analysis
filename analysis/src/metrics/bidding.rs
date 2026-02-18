@@ -204,6 +204,7 @@ fn compute_bidding_performance(
 }
 
 /// Analyze bidding performance for a specific partnership
+#[allow(dead_code)]
 pub fn analyze_partnership_bidding(
     data: &GameData,
     player1_name: &str,
