@@ -225,6 +225,8 @@ struct CauseContext<'a> {
     /// typical declaring direction. Cross-direction means it's a competitive
     /// action — never compare strains across directions.
     field_is_cross_direction: bool,
+    /// True when the declarer went down (tricks_relative < 0)
+    went_down: bool,
     competitive: Option<&'a CompetitiveInfo>,
     contract: &'a Option<ParsedContract>,
     field_contract: &'a Option<ParsedContract>,
@@ -630,6 +632,8 @@ fn analyze_direction(
         false
     };
 
+    let went_down = result.tricks_relative.is_some_and(|t| t < 0);
+
     let cause_ctx = CauseContext {
         role,
         matchpoint_pct,
@@ -638,6 +642,7 @@ fn analyze_direction(
         same_strain_as_field: same_strain,
         player_side_typically_declares: board_ctx.player_side_typically_declares(direction),
         field_is_cross_direction,
+        went_down,
         competitive: board_ctx.competitive_info(direction),
         contract: &result.contract,
         field_contract: &board_ctx.field_contract,
@@ -733,8 +738,31 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
                         }
                     }
                 }
+                // Same strain, lower level, went down: Play error — can't blame
+                // the auction for not bidding higher when you can't make what you bid.
+                if ctx.went_down {
+                    if let (Some(actual), Some(field)) = (ctx.contract, ctx.field_contract) {
+                        if actual.level < field.level {
+                            return (ResultCause::Play, "went down".to_string());
+                        }
+                    }
+                }
             } else {
-                // Different strain from field: contract choice is the primary driver
+                // Different strain from field: contract choice is the primary driver.
+                // But on competitive boards where the field contract is in the
+                // opponent's strain, "X vs Y" isn't meaningful — it's competitive.
+                if let Some(comp) = ctx.competitive {
+                    if let Some(field) = ctx.field_contract {
+                        if field.strain == comp.opp_strain {
+                            if is_good_result {
+                                return (ResultCause::Good, "competed successfully".to_string());
+                            } else if is_bad_result {
+                                return (ResultCause::Auction, "competed too high".to_string());
+                            }
+                            return (ResultCause::Auction, "competed".to_string());
+                        }
+                    }
+                }
                 if !auction_note.is_empty() {
                     if is_good_result {
                         return (ResultCause::Good, auction_note);
@@ -810,8 +838,28 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
                         return (ResultCause::Play, note);
                     }
                 }
+                // Same strain, lower level, went down: Play error
+                if ctx.went_down {
+                    if let (Some(actual), Some(field)) = (ctx.contract, ctx.field_contract) {
+                        if actual.level < field.level {
+                            return (ResultCause::Play, "pard went down".to_string());
+                        }
+                    }
+                }
             } else {
-                // Different strain: contract choice is primary
+                // Different strain: competitive board with field in opponent's strain
+                if let Some(comp) = ctx.competitive {
+                    if let Some(field) = ctx.field_contract {
+                        if field.strain == comp.opp_strain {
+                            if is_good_result {
+                                return (ResultCause::Good, "competed successfully".to_string());
+                            } else if is_bad_result {
+                                return (ResultCause::Auction, "competed too high".to_string());
+                            }
+                            return (ResultCause::Auction, "competed".to_string());
+                        }
+                    }
+                }
                 if !auction_note.is_empty() {
                     if is_good_result {
                         return (ResultCause::Good, auction_note);
@@ -835,10 +883,13 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
                     if c.strain == comp.opp_strain
                         && bid_rank_of(comp.player_max_level, comp.player_strain) > bid_rank(c)
                     {
-                        // Player's side outbids this at other tables
+                        // Player's side outbids this at other tables.
+                        // Show the minimum level needed to outbid (not the max reached).
+                        let outbid_level = min_outbid_level(c, comp.player_strain)
+                            .unwrap_or(comp.player_max_level);
                         let note = format!(
                             "failed to compete to {}{}",
-                            comp.player_max_level,
+                            outbid_level,
                             strain_display(comp.player_strain)
                         );
                         if is_bad_result {
@@ -1140,6 +1191,15 @@ fn compute_competitive_info(
         }
         _ => None,
     }
+}
+
+/// Compute the minimum level in a given strain that outbids a contract.
+///
+/// Returns the smallest level (1–7) such that bidding at that level in `strain`
+/// outranks the given contract. Returns `None` if no legal level suffices.
+fn min_outbid_level(contract: &ParsedContract, strain: bridge_parsers::Strain) -> Option<u8> {
+    let target_rank = bid_rank(contract);
+    (1..=7).find(|&level| bid_rank_of(level, strain) > target_rank)
 }
 
 /// Pluralize "trick" based on count
