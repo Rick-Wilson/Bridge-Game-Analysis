@@ -99,6 +99,39 @@ impl BoardData {
         }
     }
 
+    /// Look up double-dummy tricks for a given declarer direction and strain.
+    ///
+    /// The DD tricks string is 20 hex chars: 4 directions (N,S,E,W) × 5 strains (NT,S,H,D,C).
+    /// Each hex char (0-9, a-d) represents tricks 0-13.
+    pub fn dd_tricks(&self, declarer: Direction, strain: Strain) -> Option<u8> {
+        let dd = self.double_dummy_tricks.as_ref()?;
+        if dd.len() < 20 {
+            return None;
+        }
+
+        let dir_offset = match declarer {
+            Direction::North => 0,
+            Direction::South => 5,
+            Direction::East => 10,
+            Direction::West => 15,
+        };
+        let strain_offset = match strain {
+            Strain::NoTrump => 0,
+            Strain::Spades => 1,
+            Strain::Hearts => 2,
+            Strain::Diamonds => 3,
+            Strain::Clubs => 4,
+        };
+
+        let ch = dd.as_bytes().get(dir_offset + strain_offset)?;
+        match ch {
+            b'0'..=b'9' => Some(ch - b'0'),
+            b'a'..=b'd' => Some(ch - b'a' + 10),
+            b'A'..=b'D' => Some(ch - b'A' + 10),
+            _ => None,
+        }
+    }
+
     /// Check if declarer is vulnerable
     pub fn is_declarer_vulnerable(&self, declarer: Direction) -> bool {
         self.vulnerability.is_vulnerable(declarer)

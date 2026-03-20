@@ -1,4 +1,4 @@
-use crate::data::{BoardResult, GameData, ParsedContract};
+use crate::data::{BoardData, BoardResult, GameData, ParsedContract};
 use crate::identity::{normalize_name, Partnership, PartnershipDirection, PlayerId};
 use std::collections::HashMap;
 
@@ -30,6 +30,50 @@ pub enum ResultCause {
     Unlucky,
 }
 
+/// Primary classification of a board's structural dynamics.
+///
+/// Identifies the single most important characteristic of a board across all
+/// tables, used to guide cause analysis and provide context in CLI output.
+/// Priority: Competitive > SlamVsGame > GameVsPartscore > StrainChoice > Flat.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BoardType {
+    /// Two sides competing in different strains
+    Competitive {
+        ns_strain: &'static str,
+        ew_strain: &'static str,
+    },
+    /// Some tables reached slam, others stopped in game or below
+    SlamVsGame { strain: &'static str },
+    /// Results split between game level and part-score in the same strain
+    GameVsPartscore { strain: &'static str },
+    /// Same side declares in multiple different strains
+    StrainChoice {
+        strain_a: &'static str,
+        strain_b: &'static str,
+    },
+    /// No significant structural variation
+    Flat,
+}
+
+impl std::fmt::Display for BoardType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            BoardType::Competitive {
+                ns_strain,
+                ew_strain,
+            } => write!(f, "Competitive ({} vs {})", ns_strain, ew_strain),
+            BoardType::SlamVsGame { strain } => write!(f, "Slam vs Game ({})", strain),
+            BoardType::GameVsPartscore { strain } => {
+                write!(f, "Game vs Partscore ({})", strain)
+            }
+            BoardType::StrainChoice { strain_a, strain_b } => {
+                write!(f, "Strain choice ({} vs {})", strain_a, strain_b)
+            }
+            BoardType::Flat => write!(f, "Flat"),
+        }
+    }
+}
+
 /// A single board result for a specific player
 #[derive(Debug, Clone)]
 pub struct PlayerBoardResult {
@@ -58,6 +102,8 @@ pub struct PlayerBoardResult {
     pub declarer_vs_field: Option<f64>,
     /// Field contract (most common)
     pub field_contract: Option<ParsedContract>,
+    /// Board type classification
+    pub board_type: BoardType,
     /// Did their contract match the field?
     pub matched_field_contract: bool,
     /// Analyzed cause of the result
@@ -117,6 +163,8 @@ pub struct DirectionAnalysis {
 pub struct BoardContext {
     /// Most common contract on this board
     pub field_contract: Option<ParsedContract>,
+    /// Primary structural classification of this board
+    pub board_type: BoardType,
     /// Average tricks by strain key (e.g., "S" -> (avg, count))
     field_trick_averages: HashMap<&'static str, (f64, usize)>,
     /// Competitive info from NS perspective
@@ -190,6 +238,8 @@ pub struct BoardAnalysis {
     pub board_number: u32,
     /// Field contract (most common)
     pub field_contract: Option<ParsedContract>,
+    /// Primary structural classification
+    pub board_type: BoardType,
     /// Results sorted by NS matchpoint % descending
     pub results: Vec<BoardTableResult>,
 }
@@ -214,6 +264,7 @@ struct CompetitiveInfo {
 }
 
 /// Context passed to cause analysis
+#[allow(dead_code)]
 struct CauseContext<'a> {
     role: PlayerRole,
     matchpoint_pct: f64,
@@ -227,6 +278,11 @@ struct CauseContext<'a> {
     field_is_cross_direction: bool,
     /// True when the declarer went down (tricks_relative < 0)
     went_down: bool,
+    /// Double-dummy expected tricks for the declarer in this contract's strain/direction
+    dd_tricks: Option<u8>,
+    /// Actual tricks made by the declarer
+    tricks_made: Option<u8>,
+    board_type: &'a BoardType,
     competitive: Option<&'a CompetitiveInfo>,
     contract: &'a Option<ParsedContract>,
     field_contract: &'a Option<ParsedContract>,
@@ -325,8 +381,16 @@ pub fn analyze_player(data: &GameData, player_name: &str) -> Option<PlayerAnalys
 
         // Compute board context and run shared analysis
         let all_board_results = data.results_for_board(result.board_number);
+        let board_data = data.boards.get(&result.board_number);
         let board_ctx = compute_board_context(&all_board_results);
-        let analysis = analyze_direction(result, direction, role, &board_ctx, &all_board_results);
+        let analysis = analyze_direction(
+            result,
+            direction,
+            role,
+            &board_ctx,
+            &all_board_results,
+            board_data,
+        );
 
         // Track totals
         total_mp += analysis.matchpoint_pct;
@@ -377,6 +441,7 @@ pub fn analyze_player(data: &GameData, player_name: &str) -> Option<PlayerAnalys
                 None
             },
             field_contract: board_ctx.field_contract,
+            board_type: board_ctx.board_type,
             matched_field_contract: analysis.matched_field_contract,
             cause: analysis.cause,
             notes: analysis.notes,
@@ -443,6 +508,7 @@ pub fn analyze_board(data: &GameData, board_number: u32) -> Option<BoardAnalysis
         return None;
     }
 
+    let board_data = data.boards.get(&board_number);
     let board_ctx = compute_board_context(&all_results);
 
     let mut results = Vec::new();
@@ -473,6 +539,7 @@ pub fn analyze_board(data: &GameData, board_number: u32) -> Option<BoardAnalysis
             ns_role,
             &board_ctx,
             &all_results,
+            board_data,
         );
         let ew_analysis = analyze_direction(
             result,
@@ -480,6 +547,7 @@ pub fn analyze_board(data: &GameData, board_number: u32) -> Option<BoardAnalysis
             ew_role,
             &board_ctx,
             &all_results,
+            board_data,
         );
 
         results.push(BoardTableResult {
@@ -505,6 +573,7 @@ pub fn analyze_board(data: &GameData, board_number: u32) -> Option<BoardAnalysis
     Some(BoardAnalysis {
         board_number,
         field_contract: board_ctx.field_contract,
+        board_type: board_ctx.board_type,
         results,
     })
 }
@@ -578,8 +647,11 @@ pub fn compute_board_context(all_results: &[&BoardResult]) -> BoardContext {
         None
     };
 
+    let board_type = classify_board(all_results, &competitive_ns);
+
     BoardContext {
         field_contract,
+        board_type,
         field_trick_averages,
         competitive_ns,
         competitive_ew,
@@ -600,6 +672,7 @@ fn analyze_direction(
     role: PlayerRole,
     board_ctx: &BoardContext,
     all_results: &[&BoardResult],
+    board_data: Option<&BoardData>,
 ) -> DirectionAnalysis {
     let matchpoint_pct = calculate_matchpoint_pct(result, all_results, direction);
 
@@ -633,6 +706,13 @@ fn analyze_direction(
     };
 
     let went_down = result.tricks_relative.is_some_and(|t| t < 0);
+    let tricks_made = result.tricks_made();
+
+    // Look up double-dummy expected tricks for this declarer direction and strain
+    let dd_tricks = board_data.and_then(|bd| {
+        let contract = result.contract.as_ref()?;
+        bd.dd_tricks(result.declarer_direction, contract.strain)
+    });
 
     let cause_ctx = CauseContext {
         role,
@@ -643,6 +723,9 @@ fn analyze_direction(
         player_side_typically_declares: board_ctx.player_side_typically_declares(direction),
         field_is_cross_direction,
         went_down,
+        dd_tricks,
+        tricks_made,
+        board_type: &board_ctx.board_type,
         competitive: board_ctx.competitive_info(direction),
         contract: &result.contract,
         field_contract: &board_ctx.field_contract,
@@ -705,6 +788,21 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
             };
 
             if ctx.same_strain_as_field {
+                // DD-based analysis: when matched field contract and DD available,
+                // double-dummy tricks are the ground truth benchmark
+                if ctx.matched_field_contract {
+                    if let (Some(dd), Some(made)) = (ctx.dd_tricks, ctx.tricks_made) {
+                        let dd_diff = made as i32 - dd as i32;
+                        if dd_diff > 0 {
+                            return (ResultCause::Lucky, format!("defense slip (DD {})", dd));
+                        } else if dd_diff < 0 {
+                            return (ResultCause::Play, format!("below DD ({})", dd));
+                        } else {
+                            return (ResultCause::Good, format!("DD par ({})", dd));
+                        }
+                    }
+                }
+
                 // Same strain as field: trick comparison is meaningful and primary
                 if let Some(diff) = ctx.declarer_vs_field {
                     let tricks_diff = diff.round() as i32;
@@ -812,6 +910,20 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
             };
 
             if ctx.same_strain_as_field {
+                // DD-based analysis: when matched field contract and DD available
+                if ctx.matched_field_contract {
+                    if let (Some(dd), Some(made)) = (ctx.dd_tricks, ctx.tricks_made) {
+                        let dd_diff = made as i32 - dd as i32;
+                        if dd_diff > 0 {
+                            return (ResultCause::Lucky, format!("defense slip (DD {})", dd));
+                        } else if dd_diff < 0 {
+                            return (ResultCause::Play, format!("pard below DD ({})", dd));
+                        } else {
+                            return (ResultCause::Good, format!("DD par ({})", dd));
+                        }
+                    }
+                }
+
                 // Same strain: trick comparison is meaningful
                 if let Some(diff) = ctx.declarer_vs_field {
                     let tricks_diff = diff.round() as i32;
@@ -914,6 +1026,25 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
 
             // Non-competitive defense analysis
             if ctx.same_strain_as_field {
+                // DD-based analysis: when matched field contract and DD available
+                if ctx.matched_field_contract {
+                    if let (Some(dd), Some(made)) = (ctx.dd_tricks, ctx.tricks_made) {
+                        let dd_diff = made as i32 - dd as i32;
+                        if dd_diff > 0 {
+                            // Declarer made more than DD — defense error
+                            return (
+                                ResultCause::Defense,
+                                format!("DD slip (gave {} extra)", dd_diff),
+                            );
+                        } else if dd_diff < 0 {
+                            // Declarer made fewer than DD — good defense or declarer error
+                            return (ResultCause::Lucky, format!("held below DD ({})", dd));
+                        } else {
+                            return (ResultCause::Good, format!("DD par ({})", dd));
+                        }
+                    }
+                }
+
                 // Same strain: trick comparison is meaningful
                 if let Some(diff) = ctx.declarer_vs_field {
                     let tricks_diff = diff.round() as i32;
@@ -1191,6 +1322,97 @@ fn compute_competitive_info(
         }
         _ => None,
     }
+}
+
+/// Whether a contract is at game level or higher for its strain.
+fn is_game_level(contract: &ParsedContract) -> bool {
+    use bridge_parsers::Strain;
+    match contract.strain {
+        Strain::Clubs | Strain::Diamonds => contract.level >= 5,
+        Strain::Hearts | Strain::Spades => contract.level >= 4,
+        Strain::NoTrump => contract.level >= 3,
+    }
+}
+
+/// Classify a board's primary structural characteristic.
+///
+/// Priority: Competitive > Slam vs Game > Game vs Partscore > Strain Choice > Flat.
+/// Each classification requires at least 2 tables on each side of a split.
+fn classify_board(
+    all_results: &[&BoardResult],
+    competitive_ns: &Option<CompetitiveInfo>,
+) -> BoardType {
+    // 1. Competitive (already detected)
+    if let Some(comp) = competitive_ns {
+        return BoardType::Competitive {
+            ns_strain: strain_display(comp.player_strain),
+            ew_strain: strain_display(comp.opp_strain),
+        };
+    }
+
+    // Gather per-strain counts for level-based classifications
+    let mut by_strain: HashMap<&'static str, (usize, usize, usize)> = HashMap::new();
+    // (slam_count, game_count, partscore_count)
+    for result in all_results {
+        if let Some(contract) = &result.contract {
+            let entry = by_strain.entry(strain_key(contract)).or_insert((0, 0, 0));
+            if contract.level >= 6 {
+                entry.0 += 1;
+            } else if is_game_level(contract) {
+                entry.1 += 1;
+            } else {
+                entry.2 += 1;
+            }
+        }
+    }
+
+    // 2. Slam vs Game: strain with 2+ slam and 2+ non-slam
+    if let Some((&strain, _)) = by_strain
+        .iter()
+        .filter(|(_, (slam, game, ps))| *slam >= 2 && (*game + *ps) >= 2)
+        .max_by_key(|(_, (slam, _, _))| *slam)
+    {
+        return BoardType::SlamVsGame { strain };
+    }
+
+    // 3. Game vs Partscore: strain with 2+ game and 2+ partscore (excluding slams)
+    if let Some((&strain, _)) = by_strain
+        .iter()
+        .filter(|(_, (_, game, ps))| *game >= 2 && *ps >= 2)
+        .max_by_key(|(_, (_, game, _))| *game)
+    {
+        return BoardType::GameVsPartscore { strain };
+    }
+
+    // 4. Strain Choice: same declaring direction, 2+ strains each with 2+ tables
+    let mut ns_strains: HashMap<&'static str, usize> = HashMap::new();
+    let mut ew_strains: HashMap<&'static str, usize> = HashMap::new();
+    for result in all_results {
+        if let Some(contract) = &result.contract {
+            let map = match result.declaring_direction() {
+                PartnershipDirection::NorthSouth => &mut ns_strains,
+                PartnershipDirection::EastWest => &mut ew_strains,
+            };
+            *map.entry(strain_key(contract)).or_insert(0) += 1;
+        }
+    }
+
+    for strain_counts in [&ns_strains, &ew_strains] {
+        let mut qualifying: Vec<_> = strain_counts
+            .iter()
+            .filter(|(_, &count)| count >= 2)
+            .collect();
+        if qualifying.len() >= 2 {
+            qualifying.sort_by(|a, b| b.1.cmp(a.1));
+            return BoardType::StrainChoice {
+                strain_a: qualifying[0].0,
+                strain_b: qualifying[1].0,
+            };
+        }
+    }
+
+    // 5. Flat
+    BoardType::Flat
 }
 
 /// Compute the minimum level in a given strain that outbids a contract.

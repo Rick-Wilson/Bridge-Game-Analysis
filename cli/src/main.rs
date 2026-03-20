@@ -620,6 +620,7 @@ fn cmd_board(data: &GameData, board_number: u32, event_id: Option<&str>) -> Resu
             if let Some(field) = &analysis.field_contract {
                 println!("Field contract: {}", field.display().white().bold());
             }
+            println!("Board type:     {}", analysis.board_type);
             println!();
 
             // Header

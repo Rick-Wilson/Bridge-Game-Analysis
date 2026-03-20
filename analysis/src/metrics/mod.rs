@@ -7,6 +7,6 @@ pub use declarer::{
     analyze_declarer_performance, DeclarerPerformance, DeclarerResult, StrainPerformance,
 };
 pub use player::{
-    analyze_board, analyze_player, BoardAnalysis, BoardContext, BoardTableResult,
+    analyze_board, analyze_player, BoardAnalysis, BoardContext, BoardTableResult, BoardType,
     DirectionAnalysis, PlayerAnalysis, PlayerBoardResult, PlayerRole, ResultCause,
 };

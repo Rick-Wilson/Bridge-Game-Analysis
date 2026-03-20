@@ -13,7 +13,7 @@ pub use error::{AnalysisError, Result};
 pub use identity::{normalize_name, Partnership, PartnershipDirection, Player, PlayerId};
 pub use metrics::{
     analyze_bidding_performance, analyze_board, analyze_declarer_performance, analyze_player,
-    BiddingPerformance, BiddingResult, BoardAnalysis, BoardContext, BoardTableResult,
+    BiddingPerformance, BiddingResult, BoardAnalysis, BoardContext, BoardTableResult, BoardType,
     DeclarerPerformance, DeclarerResult, DirectionAnalysis, PlayerAnalysis, PlayerBoardResult,
     PlayerRole, ResultCause, StrainPerformance,
 };
