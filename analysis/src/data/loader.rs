@@ -72,13 +72,13 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
         let ew_pair_num = received.pair_ew;
 
         let (n_name, s_name) = pair_lookup
-            .get(&(received.section, ns_pair_num))
+            .get(&(received.section, ns_pair_num, true))
             .cloned()
             .unwrap_or_else(|| {
                 resolve_pair_from_table(&bws_data, received.section, ns_pair_num, "NS")
             });
         let (e_name, w_name) = pair_lookup
-            .get(&(received.section, ew_pair_num))
+            .get(&(received.section, ew_pair_num, false))
             .cloned()
             .unwrap_or_else(|| {
                 resolve_pair_from_table(&bws_data, received.section, ew_pair_num, "EW")
@@ -167,16 +167,15 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
     Ok(game_data)
 }
 
-/// Build a lookup from pair number to (player1, player2) using RoundData.
+/// Build a lookup from (section, pair_number, is_ns) to (player1, player2).
 ///
-/// RoundData explicitly maps pair numbers to physical tables per round.
-/// Round 1 tells us each pair's starting table and direction, which we
-/// combine with PlayerNumbers (table/direction → player name) to get
-/// pair_number → (player1, player2).
-///
-/// For Mitchell movements (or if RoundData is missing), falls back to
-/// direct table+direction lookup where pair_number = table_number.
-fn build_pair_lookup(bws_data: &BwsData) -> HashMap<(i32, i32), (String, String)> {
+/// Uses RoundData round 1 to map pair numbers to physical tables, then
+/// PlayerNumbers to get player names. The `is_ns` flag disambiguates
+/// Mitchell movements where NS pair 5 and EW pair 5 are different pairs
+/// at the same table. In Howell movements, a pair number only appears in
+/// one column (NS or EW) per round, but may appear in either column across
+/// rounds — we store both keys so lookup works from either column.
+fn build_pair_lookup(bws_data: &BwsData) -> HashMap<(i32, i32, bool), (String, String)> {
     // Build raw (section, table, direction) -> name map from PlayerNumbers
     let mut player_at: HashMap<(i32, i32, &str), String> = HashMap::new();
     for pn in &bws_data.player_numbers {
@@ -194,37 +193,47 @@ fn build_pair_lookup(bws_data: &BwsData) -> HashMap<(i32, i32), (String, String)
         }
     }
 
-    let mut pair_lookup: HashMap<(i32, i32), (String, String)> = HashMap::new();
+    let mut pair_lookup: HashMap<(i32, i32, bool), (String, String)> = HashMap::new();
 
     if bws_data.round_data.is_empty() {
-        // No RoundData: Mitchell fallback — pair number = table number
-        // NS pairs looked up as N/S, EW pairs as E/W at the pair's table
-        // (handled inline by the caller via the pair_lookup miss path)
         return pair_lookup;
     }
 
-    // Use round 1 to establish pair → (table, direction) mapping.
-    // Each pair appears exactly once in round 1 at its starting position.
+    // Use round 1 to establish pair → players mapping.
     for rd in &bws_data.round_data {
         if rd.round != 1 {
             continue;
         }
 
-        // NS pair at this table
+        // NS pair at this table in round 1 → N/S players
         if rd.ns_pair > 0 {
             let p1 = player_at.get(&(rd.section, rd.table, "N"));
             let p2 = player_at.get(&(rd.section, rd.table, "S"));
             if let (Some(p1), Some(p2)) = (p1, p2) {
-                pair_lookup.insert((rd.section, rd.ns_pair), (p1.clone(), p2.clone()));
+                let names = (p1.clone(), p2.clone());
+                // Store under is_ns=true (always valid for round 1)
+                pair_lookup.insert((rd.section, rd.ns_pair, true), names.clone());
+                // Also store under is_ns=false for Howell, where this pair
+                // may appear as EW in later rounds. Won't collide in Mitchell
+                // because Mitchell NS pair N ≠ EW pair N (different players).
+                // Actually in Mitchell they DO collide, so only store the
+                // false key if the pair numbers differ (Howell indicator).
+                if rd.ns_pair != rd.ew_pair {
+                    pair_lookup.insert((rd.section, rd.ns_pair, false), names);
+                }
             }
         }
 
-        // EW pair at this table
+        // EW pair at this table in round 1 → E/W players
         if rd.ew_pair > 0 {
             let p1 = player_at.get(&(rd.section, rd.table, "E"));
             let p2 = player_at.get(&(rd.section, rd.table, "W"));
             if let (Some(p1), Some(p2)) = (p1, p2) {
-                pair_lookup.insert((rd.section, rd.ew_pair), (p1.clone(), p2.clone()));
+                let names = (p1.clone(), p2.clone());
+                pair_lookup.insert((rd.section, rd.ew_pair, false), names.clone());
+                if rd.ns_pair != rd.ew_pair {
+                    pair_lookup.insert((rd.section, rd.ew_pair, true), names);
+                }
             }
         }
     }
