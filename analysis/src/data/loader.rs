@@ -49,11 +49,8 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
         }
     }
 
-    // Build player lookup from PlayerNumbers table
-    let player_lookup = build_player_lookup(&bws_data);
-
-    // Build pair-number-to-players lookup (handles Howell pair numbering)
-    let pair_lookup = build_pair_lookup(&bws_data, &player_lookup);
+    // Build pair-number-to-players lookup using RoundData (handles all movements)
+    let pair_lookup = build_pair_lookup(&bws_data);
 
     // Build ACBL number lookup from PlayerNames table
     let acbl_lookup = build_acbl_lookup(&bws_data);
@@ -78,13 +75,13 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
             .get(&(received.section, ns_pair_num))
             .cloned()
             .unwrap_or_else(|| {
-                resolve_pair_from_table(&player_lookup, received.section, ns_pair_num, "NS")
+                resolve_pair_from_table(&bws_data, received.section, ns_pair_num, "NS")
             });
         let (e_name, w_name) = pair_lookup
             .get(&(received.section, ew_pair_num))
             .cloned()
             .unwrap_or_else(|| {
-                resolve_pair_from_table(&player_lookup, received.section, ew_pair_num, "EW")
+                resolve_pair_from_table(&bws_data, received.section, ew_pair_num, "EW")
             });
 
         // Get ACBL numbers if available
@@ -170,69 +167,64 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
     Ok(game_data)
 }
 
-/// Build a lookup from (section, table, direction) to player name
-fn build_player_lookup(bws_data: &BwsData) -> HashMap<(i32, i32, String), String> {
-    let mut lookup = HashMap::new();
-
+/// Build a lookup from pair number to (player1, player2) using RoundData.
+///
+/// RoundData explicitly maps pair numbers to physical tables per round.
+/// Round 1 tells us each pair's starting table and direction, which we
+/// combine with PlayerNumbers (table/direction → player name) to get
+/// pair_number → (player1, player2).
+///
+/// For Mitchell movements (or if RoundData is missing), falls back to
+/// direct table+direction lookup where pair_number = table_number.
+fn build_pair_lookup(bws_data: &BwsData) -> HashMap<(i32, i32), (String, String)> {
+    // Build raw (section, table, direction) -> name map from PlayerNumbers
+    let mut player_at: HashMap<(i32, i32, &str), String> = HashMap::new();
     for pn in &bws_data.player_numbers {
         if let Some(ref name) = pn.name {
             if !name.is_empty() {
-                lookup.insert((pn.section, pn.table, pn.direction.clone()), name.clone());
+                let dir = match pn.direction.as_str() {
+                    "N" => "N",
+                    "S" => "S",
+                    "E" => "E",
+                    "W" => "W",
+                    _ => continue,
+                };
+                player_at.insert((pn.section, pn.table, dir), name.clone());
             }
         }
-    }
-
-    lookup
-}
-
-/// Build a pair-number-to-players mapping for Howell movements.
-///
-/// In a Howell, pairs switch between NS and EW, so pair numbers don't
-/// correspond to a fixed direction. The standard numbering is:
-/// - Pairs 1..N = NS starters at tables 1..N
-/// - Pairs N+1..2N = EW starters at tables 1..N
-///
-/// This is only built when pair numbers exceed the number of tables
-/// (indicating a Howell). For Mitchell, the caller falls back to
-/// direct table+direction lookup.
-fn build_pair_lookup(
-    bws_data: &BwsData,
-    player_lookup: &HashMap<(i32, i32, String), String>,
-) -> HashMap<(i32, i32), (String, String)> {
-    // Find max table and max pair number per section
-    let mut max_table_by_section: HashMap<i32, i32> = HashMap::new();
-    for pn in &bws_data.player_numbers {
-        let entry = max_table_by_section.entry(pn.section).or_insert(0);
-        *entry = (*entry).max(pn.table);
-    }
-
-    let mut max_pair_by_section: HashMap<i32, i32> = HashMap::new();
-    for rd in &bws_data.received_data {
-        let entry = max_pair_by_section.entry(rd.section).or_insert(0);
-        *entry = (*entry).max(rd.pair_ns).max(rd.pair_ew);
     }
 
     let mut pair_lookup: HashMap<(i32, i32), (String, String)> = HashMap::new();
 
-    for (&section, &num_tables) in &max_table_by_section {
-        let max_pair = max_pair_by_section.get(&section).copied().unwrap_or(0);
-        if max_pair <= num_tables {
-            // Mitchell — pair numbers = table numbers, handled by fallback
+    if bws_data.round_data.is_empty() {
+        // No RoundData: Mitchell fallback — pair number = table number
+        // NS pairs looked up as N/S, EW pairs as E/W at the pair's table
+        // (handled inline by the caller via the pair_lookup miss path)
+        return pair_lookup;
+    }
+
+    // Use round 1 to establish pair → (table, direction) mapping.
+    // Each pair appears exactly once in round 1 at its starting position.
+    for rd in &bws_data.round_data {
+        if rd.round != 1 {
             continue;
         }
 
-        // Howell: pairs 1..N = NS at tables 1..N, pairs N+1..2N = EW at tables 1..N
-        for table in 1..=num_tables {
-            let n = player_lookup.get(&(section, table, "N".to_string()));
-            let s = player_lookup.get(&(section, table, "S".to_string()));
-            if let (Some(n), Some(s)) = (n, s) {
-                pair_lookup.insert((section, table), (n.clone(), s.clone()));
+        // NS pair at this table
+        if rd.ns_pair > 0 {
+            let p1 = player_at.get(&(rd.section, rd.table, "N"));
+            let p2 = player_at.get(&(rd.section, rd.table, "S"));
+            if let (Some(p1), Some(p2)) = (p1, p2) {
+                pair_lookup.insert((rd.section, rd.ns_pair), (p1.clone(), p2.clone()));
             }
+        }
 
-            let e = player_lookup.get(&(section, table, "E".to_string()));
-            let w = player_lookup.get(&(section, table, "W".to_string()));
-            if let (Some(e), Some(w)) = (e, w) {
-                pair_lookup.insert((section, table + num_tables), (e.clone(), w.clone()));
+        // EW pair at this table
+        if rd.ew_pair > 0 {
+            let p1 = player_at.get(&(rd.section, rd.table, "E"));
+            let p2 = player_at.get(&(rd.section, rd.table, "W"));
+            if let (Some(p1), Some(p2)) = (p1, p2) {
+                pair_lookup.insert((rd.section, rd.ew_pair), (p1.clone(), p2.clone()));
             }
         }
     }
@@ -240,9 +232,10 @@ fn build_pair_lookup(
     pair_lookup
 }
 
-/// Fallback for Mitchell movements: look up players by table number and direction.
+/// Fallback for when pair_lookup has no entry: look up by table + direction.
+/// Used for Mitchell movements where pair number = table number.
 fn resolve_pair_from_table(
-    player_lookup: &HashMap<(i32, i32, String), String>,
+    bws_data: &BwsData,
     section: i32,
     table: i32,
     dir: &str,
@@ -251,15 +244,23 @@ fn resolve_pair_from_table(
         "NS" => ("N", "S"),
         _ => ("E", "W"),
     };
-    let p1 = player_lookup
-        .get(&(section, table, d1.to_string()))
-        .cloned()
-        .unwrap_or_else(|| format!("Player {}-{}", d1, table));
-    let p2 = player_lookup
-        .get(&(section, table, d2.to_string()))
-        .cloned()
-        .unwrap_or_else(|| format!("Player {}-{}", d2, table));
-    (p1, p2)
+    let p1 = bws_data
+        .get_player_at(section, table, d1)
+        .unwrap_or_default();
+    let p2 = bws_data
+        .get_player_at(section, table, d2)
+        .unwrap_or_default();
+    let name1 = if p1.is_empty() {
+        format!("Player {}-{}", d1, table)
+    } else {
+        p1.to_string()
+    };
+    let name2 = if p2.is_empty() {
+        format!("Player {}-{}", d2, table)
+    } else {
+        p2.to_string()
+    };
+    (name1, name2)
 }
 
 /// Build a lookup from player name to ACBL number
