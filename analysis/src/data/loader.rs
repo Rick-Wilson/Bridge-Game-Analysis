@@ -50,8 +50,10 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
     }
 
     // Build player lookup from PlayerNumbers table
-    // This maps (section, table, direction) -> player name
     let player_lookup = build_player_lookup(&bws_data);
+
+    // Build pair-number-to-players lookup (handles Howell pair numbering)
+    let pair_lookup = build_pair_lookup(&bws_data, &player_lookup);
 
     // Build ACBL number lookup from PlayerNames table
     let acbl_lookup = build_acbl_lookup(&bws_data);
@@ -66,17 +68,24 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
         let board_number = received.board as u32;
         let is_passout = received.contract.to_uppercase() == "PASS";
 
-        // In pairs games with movement, NS and EW pairs come from different home tables.
-        // pair_ns/pair_ew = the pair number (home table) for the NS/EW pair on this board.
-        // In Howell movements, a pair's home direction may differ from their current
-        // seating, so we resolve names by trying both orientations.
-        let ns_table = received.pair_ns;
-        let ew_table = received.pair_ew;
+        // Look up players by pair number. In Howell movements, pair numbers
+        // don't correspond 1:1 to table directions — use the pair lookup.
+        // For Mitchell, fall back to direct table+direction lookup.
+        let ns_pair_num = received.pair_ns;
+        let ew_pair_num = received.pair_ew;
 
-        let (n_name, s_name) =
-            resolve_pair_players(&player_lookup, received.section, ns_table, "NS");
-        let (e_name, w_name) =
-            resolve_pair_players(&player_lookup, received.section, ew_table, "EW");
+        let (n_name, s_name) = pair_lookup
+            .get(&(received.section, ns_pair_num))
+            .cloned()
+            .unwrap_or_else(|| {
+                resolve_pair_from_table(&player_lookup, received.section, ns_pair_num, "NS")
+            });
+        let (e_name, w_name) = pair_lookup
+            .get(&(received.section, ew_pair_num))
+            .cloned()
+            .unwrap_or_else(|| {
+                resolve_pair_from_table(&player_lookup, received.section, ew_pair_num, "EW")
+            });
 
         // Get ACBL numbers if available
         let n_acbl = acbl_lookup.get(&n_name).cloned();
@@ -176,52 +185,81 @@ fn build_player_lookup(bws_data: &BwsData) -> HashMap<(i32, i32, String), String
     lookup
 }
 
-/// Resolve the two players for a pair, given their home table (pair number).
+/// Build a pair-number-to-players mapping for Howell movements.
 ///
-/// In a Mitchell movement, pair_ns players are always registered as N/S and
-/// pair_ew as E/W. In a Howell movement, a pair's home direction may differ
-/// from their current seating — e.g., a pair registered as N/S at their home
-/// table may play EW on some boards. This function tries both orientations.
+/// In a Howell, pairs switch between NS and EW, so pair numbers don't
+/// correspond to a fixed direction. The standard numbering is:
+/// - Pairs 1..N = NS starters at tables 1..N
+/// - Pairs N+1..2N = EW starters at tables 1..N
 ///
-/// Returns (player1_name, player2_name) where player1 is the "first seat"
-/// (N or E) and player2 is the "second seat" (S or W) at the pair's home table.
-fn resolve_pair_players(
+/// This is only built when pair numbers exceed the number of tables
+/// (indicating a Howell). For Mitchell, the caller falls back to
+/// direct table+direction lookup.
+fn build_pair_lookup(
+    bws_data: &BwsData,
+    player_lookup: &HashMap<(i32, i32, String), String>,
+) -> HashMap<(i32, i32), (String, String)> {
+    // Find max table and max pair number per section
+    let mut max_table_by_section: HashMap<i32, i32> = HashMap::new();
+    for pn in &bws_data.player_numbers {
+        let entry = max_table_by_section.entry(pn.section).or_insert(0);
+        *entry = (*entry).max(pn.table);
+    }
+
+    let mut max_pair_by_section: HashMap<i32, i32> = HashMap::new();
+    for rd in &bws_data.received_data {
+        let entry = max_pair_by_section.entry(rd.section).or_insert(0);
+        *entry = (*entry).max(rd.pair_ns).max(rd.pair_ew);
+    }
+
+    let mut pair_lookup: HashMap<(i32, i32), (String, String)> = HashMap::new();
+
+    for (&section, &num_tables) in &max_table_by_section {
+        let max_pair = max_pair_by_section.get(&section).copied().unwrap_or(0);
+        if max_pair <= num_tables {
+            // Mitchell — pair numbers = table numbers, handled by fallback
+            continue;
+        }
+
+        // Howell: pairs 1..N = NS at tables 1..N, pairs N+1..2N = EW at tables 1..N
+        for table in 1..=num_tables {
+            let n = player_lookup.get(&(section, table, "N".to_string()));
+            let s = player_lookup.get(&(section, table, "S".to_string()));
+            if let (Some(n), Some(s)) = (n, s) {
+                pair_lookup.insert((section, table), (n.clone(), s.clone()));
+            }
+
+            let e = player_lookup.get(&(section, table, "E".to_string()));
+            let w = player_lookup.get(&(section, table, "W".to_string()));
+            if let (Some(e), Some(w)) = (e, w) {
+                pair_lookup.insert((section, table + num_tables), (e.clone(), w.clone()));
+            }
+        }
+    }
+
+    pair_lookup
+}
+
+/// Fallback for Mitchell movements: look up players by table number and direction.
+fn resolve_pair_from_table(
     player_lookup: &HashMap<(i32, i32, String), String>,
     section: i32,
-    pair_table: i32,
-    current_dir: &str,
+    table: i32,
+    dir: &str,
 ) -> (String, String) {
-    // Try the direction matching how the pair is currently seated
-    let (dir1, dir2) = match current_dir {
+    let (d1, d2) = match dir {
         "NS" => ("N", "S"),
-        "EW" => ("E", "W"),
-        _ => ("N", "S"),
-    };
-
-    let p1 = player_lookup.get(&(section, pair_table, dir1.to_string()));
-    let p2 = player_lookup.get(&(section, pair_table, dir2.to_string()));
-    if let (Some(p1), Some(p2)) = (p1, p2) {
-        return (p1.clone(), p2.clone());
-    }
-
-    // Howell: try the opposite orientation (pair registered in the other direction)
-    let (alt1, alt2) = match current_dir {
-        "NS" => ("E", "W"),
-        "EW" => ("N", "S"),
         _ => ("E", "W"),
     };
-
-    let p1 = player_lookup.get(&(section, pair_table, alt1.to_string()));
-    let p2 = player_lookup.get(&(section, pair_table, alt2.to_string()));
-    if let (Some(p1), Some(p2)) = (p1, p2) {
-        return (p1.clone(), p2.clone());
-    }
-
-    // Fallback: placeholder names
-    (
-        format!("Player {}-{}", dir1, pair_table),
-        format!("Player {}-{}", dir2, pair_table),
-    )
+    let p1 = player_lookup
+        .get(&(section, table, d1.to_string()))
+        .cloned()
+        .unwrap_or_else(|| format!("Player {}-{}", d1, table));
+    let p2 = player_lookup
+        .get(&(section, table, d2.to_string()))
+        .cloned()
+        .unwrap_or_else(|| format!("Player {}-{}", d2, table));
+    (p1, p2)
 }
 
 /// Build a lookup from player name to ACBL number
