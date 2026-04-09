@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Club Game Analysis</title>
+<style>
+:root {
+  --bg: #f8f9fa;
+  --surface: #ffffff;
+  --text: #212529;
+  --text-muted: #6c757d;
+  --primary: #2563eb;
+  --primary-hover: #1d4ed8;
+  --border: #dee2e6;
+  --good: #16a34a;
+  --lucky: #2563eb;
+  --play: #dc2626;
+  --defense: #ea580c;
+  --auction: #9333ea;
+  --unlucky: #6b7280;
+  --radius: 8px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.5;
+  min-height: 100vh;
+}
+
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+header {
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  padding: 1rem 0;
+  margin-bottom: 1.5rem;
+}
+
+header h1 {
+  font-size: 1.25rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+header h1 span { color: var(--text-muted); font-weight: 400; }
+
+/* Upload area */
+.upload-area {
+  background: var(--surface);
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 2rem;
+  text-align: center;
+  margin-bottom: 1.5rem;
+  transition: border-color 0.2s;
+}
+
+.upload-area.dragover { border-color: var(--primary); }
+
+.upload-area p { color: var(--text-muted); margin-bottom: 1rem; }
+
+.upload-area input[type="file"] { display: none; }
+
+.btn {
+  display: inline-block;
+  padding: 0.5rem 1.25rem;
+  background: var(--primary);
+  color: white;
+  border: none;
+  border-radius: var(--radius);
+  cursor: pointer;
+  font-size: 0.875rem;
+  font-weight: 500;
+  transition: background 0.2s;
+}
+
+.btn:hover { background: var(--primary-hover); }
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-sm { padding: 0.25rem 0.75rem; font-size: 0.8rem; }
+
+/* Controls bar */
+.controls {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 1rem;
+}
+
+.controls select {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: 0.875rem;
+  background: var(--surface);
+  min-width: 180px;
+}
+
+.tab-group {
+  display: flex;
+  gap: 2px;
+  background: var(--border);
+  border-radius: var(--radius);
+  padding: 2px;
+}
+
+.tab-group button {
+  padding: 0.35rem 1rem;
+  border: none;
+  background: transparent;
+  cursor: pointer;
+  font-size: 0.8rem;
+  border-radius: 6px;
+  color: var(--text-muted);
+  transition: all 0.2s;
+}
+
+.tab-group button.active {
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 500;
+}
+
+/* Summary card */
+.summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 0.75rem;
+}
+
+.stat { text-align: center; }
+.stat-value { font-size: 1.25rem; font-weight: 600; }
+.stat-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+/* Results table */
+.results-table {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8125rem;
+}
+
+th {
+  background: var(--bg);
+  padding: 0.5rem 0.625rem;
+  text-align: left;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+
+td {
+  padding: 0.4rem 0.625rem;
+  border-top: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+tr:hover td { background: #f1f5f9; }
+
+.text-right { text-align: right; }
+.text-center { text-align: center; }
+
+/* Cause badges */
+.cause {
+  display: inline-block;
+  padding: 0.125rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  color: white;
+}
+
+.cause-Good { background: var(--good); }
+.cause-Lucky { background: var(--lucky); }
+.cause-Play { background: var(--play); }
+.cause-Defense { background: var(--defense); }
+.cause-Auction { background: var(--auction); }
+.cause-Unlucky { background: var(--unlucky); }
+
+/* MP% bar */
+.mp-bar {
+  display: inline-block;
+  width: 50px;
+  height: 6px;
+  background: #e5e7eb;
+  border-radius: 3px;
+  overflow: hidden;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+.mp-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+/* Loading / empty states */
+.loading { text-align: center; padding: 3rem; color: var(--text-muted); }
+.hidden { display: none; }
+#error { color: var(--play); padding: 0.75rem; text-align: center; }
+
+/* Mobile */
+@media (max-width: 640px) {
+  .container { padding: 0.5rem; }
+  .controls { flex-direction: column; align-items: stretch; }
+  .controls select { min-width: 100%; }
+  .summary { grid-template-columns: repeat(2, 1fr); }
+  table { font-size: 0.75rem; }
+  td, th { padding: 0.3rem 0.4rem; }
+}
+</style>
+</head>
+<body>
+<header>
+  <div class="container">
+    <h1>Club Game Analysis <span>by Bridge Classroom</span></h1>
+  </div>
+</header>
+
+<div class="container">
+  <!-- Upload -->
+  <div id="upload-area" class="upload-area">
+    <p>Upload your game files from ACBLscore/ACBLlive<br>
+    <small>Requires a .BWS file; .PBN file optional (adds double-dummy analysis)</small></p>
+    <label class="btn" for="file-input">Choose Files</label>
+    <input type="file" id="file-input" multiple accept=".bws,.pbn,.BWS,.PBN">
+    <div id="file-names" style="margin-top: 0.5rem; color: var(--text-muted); font-size: 0.85rem;"></div>
+    <button id="upload-btn" class="btn hidden" style="margin-top: 0.5rem;">Upload &amp; Analyze</button>
+  </div>
+
+  <!-- Controls (hidden until upload) -->
+  <div id="controls" class="controls hidden">
+    <div class="tab-group">
+      <button class="active" data-view="player">Player</button>
+      <button data-view="board">Board</button>
+    </div>
+    <select id="player-select"><option>Select player...</option></select>
+    <select id="board-select" class="hidden"><option>Select board...</option></select>
+    <button id="new-file-btn" class="btn btn-sm" style="margin-left:auto;">New File</button>
+  </div>
+
+  <!-- Error -->
+  <div id="error" class="hidden"></div>
+
+  <!-- Loading -->
+  <div id="loading" class="loading hidden">Analyzing...</div>
+
+  <!-- Player results -->
+  <div id="player-results" class="hidden">
+    <div id="player-summary" class="summary"></div>
+    <div class="results-table">
+      <table>
+        <thead id="player-thead"></thead>
+        <tbody id="player-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Board results -->
+  <div id="board-results" class="hidden">
+    <div id="board-summary" class="summary"></div>
+    <div class="results-table">
+      <table>
+        <thead id="board-thead"></thead>
+        <tbody id="board-tbody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<script>
+const BASE = '{{BASE_PATH}}';
+let sessionId = null;
+let currentView = 'player';
+
+// ==================== Upload ====================
+
+const fileInput = document.getElementById('file-input');
+const uploadBtn = document.getElementById('upload-btn');
+const fileNames = document.getElementById('file-names');
+const uploadArea = document.getElementById('upload-area');
+
+fileInput.addEventListener('change', () => {
+  const names = Array.from(fileInput.files).map(f => f.name).join(', ');
+  fileNames.textContent = names;
+  uploadBtn.classList.toggle('hidden', fileInput.files.length === 0);
+});
+
+// Drag and drop
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+uploadArea.addEventListener('drop', e => {
+  e.preventDefault();
+  uploadArea.classList.remove('dragover');
+  fileInput.files = e.dataTransfer.files;
+  fileInput.dispatchEvent(new Event('change'));
+});
+
+uploadBtn.addEventListener('click', async () => {
+  const files = fileInput.files;
+  if (!files.length) return;
+
+  const formData = new FormData();
+  for (const f of files) {
+    const ext = f.name.split('.').pop().toLowerCase();
+    formData.append(ext === 'pbn' ? 'pbn' : 'bws', f);
+  }
+
+  showLoading(true);
+  showError('');
+
+  try {
+    const res = await fetch(`${BASE}/api/upload`, { method: 'POST', body: formData });
+    if (!res.ok) throw new Error(await res.text());
+    const data = await res.json();
+    sessionId = data.session_id;
+
+    // Populate dropdowns
+    populateSelect('player-select', data.players, 'Select player...');
+    populateSelect('board-select', data.boards.map(String), 'Select board...');
+
+    uploadArea.classList.add('hidden');
+    document.getElementById('controls').classList.remove('hidden');
+  } catch (e) {
+    showError(e.message);
+  } finally {
+    showLoading(false);
+  }
+});
+
+document.getElementById('new-file-btn').addEventListener('click', () => {
+  sessionId = null;
+  fileInput.value = '';
+  fileNames.textContent = '';
+  uploadBtn.classList.add('hidden');
+  uploadArea.classList.remove('hidden');
+  document.getElementById('controls').classList.add('hidden');
+  hideResults();
+});
+
+// ==================== View Tabs ====================
+
+document.querySelectorAll('.tab-group button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-group button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentView = btn.dataset.view;
+    document.getElementById('player-select').classList.toggle('hidden', currentView !== 'player');
+    document.getElementById('board-select').classList.toggle('hidden', currentView !== 'board');
+    hideResults();
+  });
+});
+
+// ==================== Selection ====================
+
+document.getElementById('player-select').addEventListener('change', async (e) => {
+  if (!e.target.value || e.target.selectedIndex === 0) return;
+  showLoading(true); hideResults(); showError('');
+  try {
+    const res = await fetch(`${BASE}/api/player?session=${sessionId}&name=${encodeURIComponent(e.target.value)}`);
+    if (!res.ok) throw new Error(await res.text());
+    renderPlayerAnalysis(await res.json());
+  } catch (e) { showError(e.message); }
+  finally { showLoading(false); }
+});
+
+document.getElementById('board-select').addEventListener('change', async (e) => {
+  if (!e.target.value || e.target.selectedIndex === 0) return;
+  showLoading(true); hideResults(); showError('');
+  try {
+    const res = await fetch(`${BASE}/api/board?session=${sessionId}&num=${e.target.value}`);
+    if (!res.ok) throw new Error(await res.text());
+    renderBoardAnalysis(await res.json());
+  } catch (e) { showError(e.message); }
+  finally { showLoading(false); }
+});
+
+// ==================== Render Player ====================
+
+function renderPlayerAnalysis(data) {
+  const div = document.getElementById('player-results');
+  div.classList.remove('hidden');
+
+  document.getElementById('player-summary').innerHTML = `
+    <div class="stat"><div class="stat-value">${data.player_name}</div><div class="stat-label">Player</div></div>
+    <div class="stat"><div class="stat-value">${data.boards_played}</div><div class="stat-label">Boards</div></div>
+    <div class="stat"><div class="stat-value">${data.avg_matchpoint_pct.toFixed(1)}%</div><div class="stat-label">Avg MP%</div></div>
+    <div class="stat"><div class="stat-value">${data.declaring_mp_pct ? data.declaring_mp_pct.toFixed(1)+'%' : '-'}</div><div class="stat-label">Declaring</div></div>
+    <div class="stat"><div class="stat-value">${data.defending_mp_pct ? data.defending_mp_pct.toFixed(1)+'%' : '-'}</div><div class="stat-label">Defending</div></div>
+  `;
+
+  document.getElementById('player-thead').innerHTML = `<tr>
+    <th>Board</th><th>Dir</th><th>Contract</th><th class="text-right">Score</th>
+    <th class="text-right">MP%</th><th>Field</th><th>Cause</th><th>Notes</th>
+  </tr>`;
+
+  document.getElementById('player-tbody').innerHTML = data.board_results.map(r => `<tr>
+    <td>${r.board_number}</td>
+    <td>${r.direction}</td>
+    <td>${r.result_str || 'Pass'}</td>
+    <td class="text-right">${r.player_score}</td>
+    <td class="text-right">${r.matchpoint_pct.toFixed(1)}% ${mpBar(r.matchpoint_pct)}</td>
+    <td>${r.matched_field_contract ? '=' : ''}${r.field_contract || ''}</td>
+    <td><span class="cause cause-${r.cause}">${r.cause}</span></td>
+    <td style="white-space:normal;max-width:200px;">${r.notes}</td>
+  </tr>`).join('');
+}
+
+// ==================== Render Board ====================
+
+function renderBoardAnalysis(data) {
+  const div = document.getElementById('board-results');
+  div.classList.remove('hidden');
+
+  document.getElementById('board-summary').innerHTML = `
+    <div class="stat"><div class="stat-value">Board ${data.board_number}</div><div class="stat-label">Board</div></div>
+    <div class="stat"><div class="stat-value">${data.field_contract || '-'}</div><div class="stat-label">Field Contract</div></div>
+    <div class="stat"><div class="stat-value">${data.board_type}</div><div class="stat-label">Board Type</div></div>
+    <div class="stat"><div class="stat-value">${data.results.length}</div><div class="stat-label">Tables</div></div>
+  `;
+
+  document.getElementById('board-thead').innerHTML = `<tr>
+    <th>NS Pair</th><th>EW Pair</th><th>Contract</th>
+    <th class="text-right">NS Score</th>
+    <th class="text-right">NS MP%</th><th>NS Cause</th>
+    <th class="text-right">EW MP%</th><th>EW Cause</th>
+  </tr>`;
+
+  document.getElementById('board-tbody').innerHTML = data.results.map(r => `<tr>
+    <td>${r.ns_pair}</td>
+    <td>${r.ew_pair}</td>
+    <td>${r.result_str || 'Pass'}</td>
+    <td class="text-right">${r.ns_score}</td>
+    <td class="text-right">${r.ns_analysis.matchpoint_pct.toFixed(1)}% ${mpBar(r.ns_analysis.matchpoint_pct)}</td>
+    <td><span class="cause cause-${r.ns_analysis.cause}">${r.ns_analysis.cause}</span> ${r.ns_analysis.notes}</td>
+    <td class="text-right">${r.ew_analysis.matchpoint_pct.toFixed(1)}% ${mpBar(r.ew_analysis.matchpoint_pct)}</td>
+    <td><span class="cause cause-${r.ew_analysis.cause}">${r.ew_analysis.cause}</span> ${r.ew_analysis.notes}</td>
+  </tr>`).join('');
+}
+
+// ==================== Helpers ====================
+
+function mpBar(pct) {
+  const color = pct >= 60 ? 'var(--good)' : pct >= 40 ? '#eab308' : 'var(--play)';
+  return `<span class="mp-bar"><span class="mp-fill" style="width:${pct}%;background:${color}"></span></span>`;
+}
+
+function populateSelect(id, items, placeholder) {
+  const sel = document.getElementById(id);
+  sel.innerHTML = `<option value="">${placeholder}</option>` +
+    items.map(i => `<option value="${i}">${i}</option>`).join('');
+}
+
+function showLoading(show) { document.getElementById('loading').classList.toggle('hidden', !show); }
+function showError(msg) {
+  const el = document.getElementById('error');
+  el.textContent = msg;
+  el.classList.toggle('hidden', !msg);
+}
+function hideResults() {
+  document.getElementById('player-results').classList.add('hidden');
+  document.getElementById('board-results').classList.add('hidden');
+}
+</script>
+</body>
+</html>
