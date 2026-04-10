@@ -13,7 +13,7 @@
 }
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; min-height: 100vh; }
-.container { max-width: 960px; margin: 0 auto; padding: 1rem; }
+.container { max-width: 1100px; margin: 0 auto; padding: 1rem; }
 header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 1rem 0; margin-bottom: 1.5rem; }
 header h1 { font-size: 1.25rem; font-weight: 600; text-align: center; }
 header h1 span { color: var(--text-muted); font-weight: 400; }
@@ -96,8 +96,7 @@ tr.clickable-row:hover td { background: #e0e7ff; }
 .side-panel table { font-size: 0.75rem; }
 .side-panel th, .side-panel td { padding: 3px 5px; border: 1px solid var(--border); text-align: center; }
 .side-panel th { background: var(--bg); }
-.dd-highlight-green { background: #d4edda; color: #155724; font-weight: 700; }
-.dd-highlight-red { background: #f8d7da; color: #721c24; font-weight: 700; }
+.dd-highlight-green { background: #d4edda !important; color: #155724 !important; font-weight: 700; }
 .bba-loading { color: var(--text-muted); font-size: 0.75rem; text-align: center; padding: 0.5rem; }
 
 .hand-viewer-frame { width: 100%; height: 500px; border: 1px solid var(--border); border-radius: var(--radius); }
@@ -402,6 +401,7 @@ function navBoard(delta) {
 
 let currentBoardData = null;
 let activeRowIdx = 0;
+let cachedDDTricks = null; // Store DD data for re-rendering on row change
 
 function renderBoard(data) {
   currentBoardData = data;
@@ -426,7 +426,7 @@ function renderBoard(data) {
     setViewerRow(activeRowIdx);
     // Fetch DD and BBA data
     if (data.deal_info) {
-      fetchDD(data.deal_info);
+      fetchDD(data.deal_info, data.results[activeRowIdx]);
       fetchBBA(data.deal_info);
     }
   }
@@ -478,6 +478,10 @@ function clickBoardRow(idx) {
   activeRowIdx = idx;
   setViewerRow(idx);
   renderBoardRows();
+  // Re-render DD table with new contract highlighted
+  if (cachedDDTricks && currentBoardData) {
+    renderDDTable(cachedDDTricks, currentBoardData.results[idx]);
+  }
 }
 
 function setViewerRow(idx) {
@@ -487,7 +491,8 @@ function setViewerRow(idx) {
 }
 
 // ==================== DD Table ====================
-async function fetchDD(dealInfo) {
+async function fetchDD(dealInfo, activeResult) {
+  cachedDDTricks = null;
   const ddEl = document.getElementById('dd-section');
   ddEl.innerHTML = '<div class="bba-loading">Loading DD analysis...</div>';
   try {
@@ -501,22 +506,42 @@ async function fetchDD(dealInfo) {
     if (!json.sess || !json.sess.ddtricks || json.sess.ddtricks.length < 20) {
       ddEl.innerHTML = '<div class="bba-loading">DD unavailable</div>'; return;
     }
-    renderDDTable(json.sess.ddtricks);
+    cachedDDTricks = json.sess.ddtricks;
+    renderDDTable(cachedDDTricks, activeResult);
   } catch (e) {
     ddEl.innerHTML = '<div class="bba-loading">DD unavailable</div>';
   }
 }
 
-function renderDDTable(ddtricks) {
-  function parseTrick(ch) {
-    if (ch >= '0' && ch <= '9') return parseInt(ch);
-    if (ch >= 'a' && ch <= 'd') return 10 + ch.charCodeAt(0) - 97;
-    if (ch >= 'A' && ch <= 'D') return 10 + ch.charCodeAt(0) - 65;
-    return 0;
+function parseDDTrick(ch) {
+  if (ch >= '0' && ch <= '9') return parseInt(ch);
+  if (ch >= 'a' && ch <= 'd') return 10 + ch.charCodeAt(0) - 97;
+  if (ch >= 'A' && ch <= 'D') return 10 + ch.charCodeAt(0) - 65;
+  return 0;
+}
+
+function renderDDTable(ddtricks, activeResult) {
+  // Parse the active contract to determine which cell to highlight
+  let hlSeat = null, hlSuitIdx = null;
+  if (activeResult && activeResult.result_str) {
+    const m = activeResult.result_str.match(/^\d(NT|[SHDC])([NESW])/);
+    if (m) {
+      hlSeat = m[2]; // declarer seat
+      const strainMap = {C:0, D:1, H:2, S:3, NT:4};
+      hlSuitIdx = strainMap[m[1]] ?? null;
+    }
   }
+
   const seats = ['N','S','E','W'];
-  const suits = ['NT','S','H','D','C'];
-  const suitHdrs = ['<span style="color:#000">\u2663</span>','<span style="color:#d00">\u2666</span>','<span style="color:#d00">\u2665</span>','<span style="color:#000">\u2660</span>','NT'];
+  // DD tricks order: NT, S, H, D, C per seat — display as C, D, H, S, NT
+  const ddOrder = [4, 3, 2, 1, 0]; // map display col to ddtricks offset
+  const suitHdrs = [
+    '<span style="color:#000">\u2663</span>',
+    '<span style="color:#d00">\u2666</span>',
+    '<span style="color:#d00">\u2665</span>',
+    '<span style="color:#000">\u2660</span>',
+    'NT'
+  ];
 
   let html = '<h4>Double Dummy</h4><table><thead><tr><th></th>';
   for (let j = 0; j < 5; j++) html += `<th>${suitHdrs[j]}</th>`;
@@ -524,8 +549,10 @@ function renderDDTable(ddtricks) {
   for (let i = 0; i < 4; i++) {
     html += `<tr><td style="font-weight:700;background:var(--bg);">${seats[i]}</td>`;
     for (let j = 0; j < 5; j++) {
-      const tricks = parseTrick(ddtricks[i*5+j]);
-      html += `<td>${tricks}</td>`;
+      const tricks = parseDDTrick(ddtricks[i * 5 + ddOrder[j]]);
+      const isHighlight = (seats[i] === hlSeat && j === hlSuitIdx);
+      const cls = isHighlight ? ' class="dd-highlight-green"' : '';
+      html += `<td${cls}>${tricks}</td>`;
     }
     html += '</tr>';
   }
