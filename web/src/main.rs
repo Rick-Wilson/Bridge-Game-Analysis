@@ -101,8 +101,12 @@ async fn main() {
         .layer(DefaultBodyLimit::max(20 * 1024 * 1024)) // 20MB for BWS files
         .with_state(state);
 
-    // Nest under base path
-    let root = Router::new().nest(&base_path, app);
+    // Nest under base path. Also handle trailing slash by redirecting.
+    let redirect_to = base_path.clone();
+    let root = Router::new().nest(&base_path, app).route(
+        &format!("{}/", base_path),
+        get(move || async move { axum::response::Redirect::permanent(&redirect_to) }),
+    );
 
     let addr = SocketAddr::new(host.parse().expect("Invalid HOST"), port);
     tracing::info!("Starting server at http://{}{}", addr, base_path);
