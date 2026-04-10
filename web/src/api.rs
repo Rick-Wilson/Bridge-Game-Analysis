@@ -298,7 +298,26 @@ pub async fn analyze_board(
         format!("Board {} not found", board_num),
     ))?;
 
-    let response: BoardAnalysisResponse = (&analysis).into();
+    let mut response: BoardAnalysisResponse = (&analysis).into();
+
+    // Generate BBO hand viewer URL for this board (no player-specific names)
+    if let Some(board_data) = game_data.boards.get(&board_num) {
+        // Use first result's partnerships for player names in the viewer
+        let first_result = game_data
+            .results
+            .iter()
+            .find(|r| r.board_number == board_num);
+        let seat_players =
+            first_result.map(|r| SeatPlayers::from_partnerships(&r.ns_pair, &r.ew_pair));
+        let contract_result = first_result.and_then(|r| {
+            r.contract.as_ref().map(|c| ContractResult {
+                contract: c.clone(),
+                declarer: r.declarer_direction,
+            })
+        });
+        response.bbo_url =
+            board_data.bbo_handviewer_url(seat_players.as_ref(), contract_result.as_ref());
+    }
 
     let duration = start.elapsed().as_millis() as u64;
     let logger = AuditLogger::new(&state.log_dir);

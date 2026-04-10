@@ -82,6 +82,7 @@ pub struct BoardAnalysisResponse {
     pub board_number: u32,
     pub field_contract: Option<String>,
     pub board_type: String,
+    pub bbo_url: Option<String>,
     pub results: Vec<BoardTableResultResponse>,
 }
 
@@ -250,6 +251,7 @@ impl From<&BoardAnalysis> for BoardAnalysisResponse {
             board_number: a.board_number,
             field_contract: a.field_contract.as_ref().map(|c| c.display()),
             board_type: a.board_type.to_string(),
+            bbo_url: None, // Populated by caller
             results: a.results.iter().map(|r| r.into()).collect(),
         }
     }

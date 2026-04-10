@@ -6,39 +6,18 @@
 <title>Club Game Analysis</title>
 <style>
 :root {
-  --bg: #f8f9fa;
-  --surface: #ffffff;
-  --text: #212529;
-  --text-muted: #6c757d;
-  --primary: #2563eb;
-  --primary-hover: #1d4ed8;
-  --border: #dee2e6;
-  --good: #16a34a;
-  --lucky: #2563eb;
-  --play: #dc2626;
-  --defense: #ea580c;
-  --auction: #9333ea;
-  --unlucky: #6b7280;
-  --radius: 8px;
+  --bg: #f8f9fa; --surface: #ffffff; --text: #212529; --text-muted: #6c757d;
+  --primary: #2563eb; --primary-hover: #1d4ed8; --border: #dee2e6;
+  --good: #16a34a; --lucky: #2563eb; --play: #dc2626; --defense: #ea580c;
+  --auction: #9333ea; --unlucky: #6b7280; --radius: 8px;
 }
-
 * { box-sizing: border-box; margin: 0; padding: 0; }
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  line-height: 1.5;
-  min-height: 100vh;
-}
-
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; min-height: 100vh; }
 .container { max-width: 960px; margin: 0 auto; padding: 1rem; }
-
 header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 1rem 0; margin-bottom: 1.5rem; }
 header h1 { font-size: 1.25rem; font-weight: 600; text-align: center; }
 header h1 span { color: var(--text-muted); font-weight: 400; }
 
-/* Upload */
 .upload-area { background: var(--surface); border: 2px dashed var(--border); border-radius: var(--radius); padding: 2rem; text-align: center; margin-bottom: 1.5rem; transition: border-color 0.2s; }
 .upload-area.dragover { border-color: var(--primary); }
 .upload-area p { color: var(--text-muted); margin-bottom: 1rem; }
@@ -51,33 +30,29 @@ header h1 span { color: var(--text-muted); font-weight: 400; }
 .btn-outline:hover { background: var(--primary); color: white; }
 .btn-outline.active { background: var(--primary); color: white; }
 
-/* Event header */
 .event-header { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 1rem; margin-bottom: 1rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
 .event-info { font-size: 0.9rem; }
 .event-info strong { font-size: 1rem; }
 .event-info span { color: var(--text-muted); margin-left: 0.75rem; }
 
-/* Grid selector */
 .grid-selector { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; margin-bottom: 1rem; }
 .grid-selector h3 { font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 0.5rem; }
 .name-grid { display: flex; flex-wrap: wrap; gap: 0.375rem; }
 .name-grid button { padding: 0.3rem 0.65rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); cursor: pointer; font-size: 0.8rem; transition: all 0.15s; white-space: nowrap; }
 .name-grid button:hover { border-color: var(--primary); color: var(--primary); }
 .name-grid button.active { background: var(--primary); color: white; border-color: var(--primary); }
-.board-grid { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+.board-grid { display: flex; flex-wrap: wrap; gap: 0.375rem; align-items: center; }
 .board-grid button { width: 2.5rem; height: 2.25rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); cursor: pointer; font-size: 0.85rem; font-weight: 500; transition: all 0.15s; }
 .board-grid button:hover { border-color: var(--primary); color: var(--primary); }
 .board-grid button.active { background: var(--primary); color: white; border-color: var(--primary); }
+.nav-arrow { width: 2.25rem; height: 2.25rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); cursor: pointer; font-size: 1.1rem; display: flex; align-items: center; justify-content: center; transition: all 0.15s; }
+.nav-arrow:hover { border-color: var(--primary); color: var(--primary); }
 
-/* Summary cards */
 .summary { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; }
 .stat { text-align: center; }
 .stat-value { font-size: 1.1rem; font-weight: 600; }
 .stat-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
-.stat-clickable { cursor: pointer; color: var(--primary); }
-.stat-clickable:hover { text-decoration: underline; }
 
-/* Results table */
 .results-table { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; -webkit-overflow-scrolling: touch; }
 table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
 th { background: var(--bg); padding: 0.5rem 0.625rem; text-align: left; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); white-space: nowrap; position: sticky; top: 0; }
@@ -85,29 +60,27 @@ td { padding: 0.4rem 0.625rem; border-top: 1px solid var(--border); white-space:
 tr:hover td { background: #f1f5f9; }
 .text-right { text-align: right; }
 
-/* Cause badges */
 .cause { display: inline-block; padding: 0.125rem 0.5rem; border-radius: 999px; font-size: 0.7rem; font-weight: 600; color: white; }
 .cause-Good { background: var(--good); } .cause-Lucky { background: var(--lucky); }
 .cause-Play { background: var(--play); } .cause-Defense { background: var(--defense); }
 .cause-Auction { background: var(--auction); } .cause-Unlucky { background: var(--unlucky); }
 
-/* MP% bar */
 .mp-bar { display: inline-block; width: 50px; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; vertical-align: middle; margin-left: 4px; }
 .mp-fill { display: block; height: 100%; border-radius: 3px; transition: width 0.3s; }
 
-/* Contract/MP coloring */
 .contract-made { color: var(--good); font-weight: 500; }
 .contract-down { color: var(--play); font-weight: 500; }
 .mp-good { color: var(--good); font-weight: 500; }
 .mp-bad { color: var(--play); font-weight: 500; }
 .suit-red { color: #dc2626; } .suit-black { color: #212529; }
-td a, .clickable { color: var(--primary); text-decoration: none; font-weight: 500; cursor: pointer; }
-td a:hover, .clickable:hover { text-decoration: underline; }
+.clickable { color: var(--primary); text-decoration: none; font-weight: 500; cursor: pointer; }
+.clickable:hover { text-decoration: underline; }
+td a { color: var(--primary); text-decoration: none; font-weight: 500; cursor: pointer; }
+td a:hover { text-decoration: underline; }
+.declarer { font-weight: 700; }
 
-/* Board detail with hand viewer */
 .hand-viewer-frame { width: 100%; height: 500px; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 1rem; }
 
-/* Misc */
 .loading { text-align: center; padding: 3rem; color: var(--text-muted); }
 .hidden { display: none; }
 #error { color: var(--play); padding: 0.75rem; text-align: center; }
@@ -124,11 +97,7 @@ td a:hover, .clickable:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
-<header>
-  <div class="container">
-    <h1>Club Game Analysis <span>by Bridge Classroom</span></h1>
-  </div>
-</header>
+<header><div class="container"><h1>Club Game Analysis <span>by Bridge Classroom</span></h1></div></header>
 
 <div class="container">
   <!-- Upload -->
@@ -140,32 +109,27 @@ td a:hover, .clickable:hover { text-decoration: underline; }
     <div id="file-names" style="margin-top:0.5rem;color:var(--text-muted);font-size:0.85rem;"></div>
   </div>
 
-  <!-- Help -->
   <details id="download-help" style="margin-bottom:1rem;">
     <summary style="cursor:pointer;color:var(--primary);font-size:0.85rem;font-weight:500;">Where do I find these files?</summary>
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;margin-top:0.5rem;">
-      <p style="font-size:0.85rem;margin-bottom:0.75rem;">
-        On your game's page at <strong>ACBL Live for Clubs</strong>, download both files using the links in the top-right <strong>Reference Data</strong> section:</p>
-      <img src="{{BASE_PATH}}/static/acbl-download-help.png" alt="ACBL Live download links"
-           style="max-width:100%;border:1px solid var(--border);border-radius:var(--radius);">
-      <p style="font-size:0.8rem;color:var(--text-muted);margin-top:0.5rem;">
-        Then click <strong>Choose Files</strong> above and select both files from your Downloads folder.</p>
+      <p style="font-size:0.85rem;margin-bottom:0.75rem;">On your game's page at <strong>ACBL Live for Clubs</strong>, download both files using the links in the top-right <strong>Reference Data</strong> section:</p>
+      <img src="{{BASE_PATH}}/static/acbl-download-help.png" alt="ACBL Live download links" style="max-width:100%;border:1px solid var(--border);border-radius:var(--radius);">
+      <p style="font-size:0.8rem;color:var(--text-muted);margin-top:0.5rem;">Then click <strong>Choose Files</strong> above and select both files from your Downloads folder.</p>
     </div>
   </details>
 
-  <!-- PBN notice -->
   <div id="pbn-notice" class="pbn-notice hidden">
-    <strong>Tip:</strong> Upload the matching .PBN file for hand viewer links and double-dummy analysis.
+    <strong>Tip:</strong> Upload the matching .PBN file for hand viewer and double-dummy analysis.
     <label class="btn btn-sm" for="pbn-add-input" style="margin-left:0.5rem;">Add PBN File</label>
     <input type="file" id="pbn-add-input" accept=".pbn,.PBN" style="display:none;">
   </div>
 
-  <!-- Event header (shown after upload) -->
+  <!-- Event header -->
   <div id="event-header" class="event-header hidden">
     <div class="event-info"><strong id="event-name"></strong><span id="event-date"></span></div>
     <div style="display:flex;gap:0.375rem;align-items:center;">
-      <button class="btn btn-sm btn-outline active" id="tab-players" onclick="showGrid('players')">Players</button>
-      <button class="btn btn-sm btn-outline" id="tab-boards" onclick="showGrid('boards')">Boards</button>
+      <button class="btn btn-sm btn-outline active" id="tab-players" onclick="switchView('players')">Players</button>
+      <button class="btn btn-sm btn-outline" id="tab-boards" onclick="switchView('boards')">Boards</button>
       <button class="btn btn-sm" id="new-file-btn" style="margin-left:0.5rem;">New File</button>
     </div>
   </div>
@@ -176,17 +140,16 @@ td a:hover, .clickable:hover { text-decoration: underline; }
     <div class="name-grid" id="player-names"></div>
   </div>
 
-  <!-- Board grid -->
+  <!-- Board grid (with nav arrows) -->
   <div id="board-grid" class="grid-selector hidden">
     <h3>Select a board</h3>
     <div class="board-grid" id="board-numbers"></div>
   </div>
 
-  <!-- Error / Loading -->
   <div id="error" class="hidden"></div>
   <div id="loading" class="loading hidden">Analyzing...</div>
 
-  <!-- Player results -->
+  <!-- Player results (no hand viewer here) -->
   <div id="player-results" class="hidden">
     <div id="player-summary" class="summary"></div>
     <div id="player-summary2" class="summary"></div>
@@ -195,8 +158,8 @@ td a:hover, .clickable:hover { text-decoration: underline; }
     </div>
   </div>
 
-  <!-- Board detail (hand viewer + analysis) -->
-  <div id="board-detail" class="hidden">
+  <!-- Board results (hand viewer + table) -->
+  <div id="board-results" class="hidden">
     <iframe id="board-viewer" class="hand-viewer-frame hidden" sandbox="allow-scripts allow-same-origin" allowfullscreen></iframe>
     <div id="board-summary" class="summary"></div>
     <div class="results-table">
@@ -210,10 +173,9 @@ const BASE = '{{BASE_PATH}}';
 let sessionId = null;
 let cachedPlayers = [];
 let cachedBoards = [];
-let currentGridView = 'players';
+let currentBoard = null;
 
 // ==================== Upload ====================
-
 const fileInput = document.getElementById('file-input');
 const fileNames = document.getElementById('file-names');
 const uploadArea = document.getElementById('upload-area');
@@ -222,7 +184,6 @@ fileInput.addEventListener('change', () => {
   const files = Array.from(fileInput.files);
   if (files.length) { fileNames.textContent = files.map(f => f.name).join(', '); doUpload(files); }
 });
-
 uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
 uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
 uploadArea.addEventListener('drop', e => {
@@ -248,27 +209,21 @@ async function doUpload(files, addTo) {
     sessionId = data.session_id;
     cachedPlayers = data.players;
     cachedBoards = data.boards;
-
-    // Event info
-    const nameEl = document.getElementById('event-name');
-    const dateEl = document.getElementById('event-date');
-    nameEl.textContent = data.event_name || 'Game Results';
-    dateEl.textContent = data.event_date || '';
-
+    document.getElementById('event-name').textContent = data.event_name || 'Game Results';
+    document.getElementById('event-date').textContent = data.event_date || '';
     uploadArea.classList.add('hidden');
     document.getElementById('download-help').classList.add('hidden');
     document.getElementById('event-header').classList.remove('hidden');
     document.getElementById('pbn-notice').classList.toggle('hidden', hasPbn || data.has_pbn);
-    showGrid('players');
+    switchView('players');
   } catch (e) { showError(e.message); }
   finally { showLoading(false); }
 }
 
 document.getElementById('pbn-add-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];
-  if (file && sessionId) { const formData = new FormData(); formData.append('pbn', file); doUpload([file], sessionId); }
+  if (file && sessionId) doUpload([file], sessionId);
 });
-
 document.getElementById('new-file-btn').addEventListener('click', () => {
   sessionId = null; fileInput.value = ''; fileNames.textContent = '';
   uploadArea.classList.remove('hidden');
@@ -277,66 +232,62 @@ document.getElementById('new-file-btn').addEventListener('click', () => {
   document.getElementById('player-grid').classList.add('hidden');
   document.getElementById('board-grid').classList.add('hidden');
   document.getElementById('pbn-notice').classList.add('hidden');
-  hideResults();
+  hideAll();
 });
 
-// ==================== Grid Views ====================
-
-function showGrid(which) {
-  currentGridView = which;
-  document.getElementById('tab-players').classList.toggle('active', which === 'players');
-  document.getElementById('tab-boards').classList.toggle('active', which === 'boards');
-  hideResults();
-
-  if (which === 'players') {
+// ==================== View Switching ====================
+function switchView(view) {
+  document.getElementById('tab-players').classList.toggle('active', view === 'players');
+  document.getElementById('tab-boards').classList.toggle('active', view === 'boards');
+  hideAll();
+  if (view === 'players') {
     document.getElementById('board-grid').classList.add('hidden');
-    const grid = document.getElementById('player-grid');
-    grid.classList.remove('hidden');
-    document.getElementById('player-names').innerHTML = cachedPlayers.map(name =>
-      `<button onclick="selectPlayer(this, '${name.replace(/'/g, "\\'")}')">${name}</button>`
-    ).join('');
+    showPlayerGrid();
   } else {
     document.getElementById('player-grid').classList.add('hidden');
-    const grid = document.getElementById('board-grid');
-    grid.classList.remove('hidden');
-    document.getElementById('board-numbers').innerHTML = cachedBoards.map(num =>
-      `<button onclick="selectBoard(this, ${num})">${num}</button>`
-    ).join('');
+    showBoardGrid();
   }
 }
 
+function showPlayerGrid() {
+  const grid = document.getElementById('player-grid');
+  grid.classList.remove('hidden');
+  document.getElementById('player-names').innerHTML = cachedPlayers.map(name =>
+    `<button onclick="selectPlayer(this,'${esc(name)}')">${name}</button>`
+  ).join('');
+}
+
+function showBoardGrid() {
+  const grid = document.getElementById('board-grid');
+  grid.classList.remove('hidden');
+  const arrows = `<button class="nav-arrow" onclick="navBoard(-1)" title="Previous board">\u25C0</button>`;
+  const arrowR = `<button class="nav-arrow" onclick="navBoard(1)" title="Next board">\u25B6</button>`;
+  document.getElementById('board-numbers').innerHTML = arrows +
+    cachedBoards.map(num =>
+      `<button onclick="selectBoard(this,${num})" ${num === currentBoard ? 'class="active"' : ''}>${num}</button>`
+    ).join('') + arrowR;
+}
+
+// ==================== Player ====================
 async function selectPlayer(btn, name) {
   document.querySelectorAll('.name-grid button').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  showLoading(true); hideResults(); showError('');
+  if (btn) btn.classList.add('active');
+  showLoading(true); hideAll(); showError('');
   try {
     const res = await fetch(`${BASE}/api/player?session=${sessionId}&name=${encodeURIComponent(name)}`);
     if (!res.ok) throw new Error(await res.text());
-    renderPlayerAnalysis(await res.json());
+    renderPlayer(await res.json());
+    // Hide the player grid once results show
+    document.getElementById('player-grid').classList.add('hidden');
   } catch (e) { showError(e.message); }
   finally { showLoading(false); }
 }
 
-async function selectBoard(btn, num) {
-  document.querySelectorAll('.board-grid button').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  showLoading(true); hideResults(); showError('');
-  try {
-    const res = await fetch(`${BASE}/api/board?session=${sessionId}&num=${num}`);
-    if (!res.ok) throw new Error(await res.text());
-    renderBoardAnalysis(await res.json());
-  } catch (e) { showError(e.message); }
-  finally { showLoading(false); }
-}
-
-// ==================== Render Player ====================
-
-function renderPlayerAnalysis(data) {
+function renderPlayer(data) {
   document.getElementById('player-results').classList.remove('hidden');
-
   const mpColor = data.avg_matchpoint_pct >= 50 ? 'mp-good' : 'mp-bad';
   const partners = data.partners.map(p =>
-    `<span class="stat-clickable" onclick="clickPartner('${p.replace(/'/g, "\\'")}')">${p}</span>`
+    `<span class="clickable" onclick="goToPlayer('${esc(p)}')">${p}</span>`
   ).join(', ');
 
   document.getElementById('player-summary').innerHTML = `
@@ -345,19 +296,14 @@ function renderPlayerAnalysis(data) {
     <div class="stat"><div class="stat-value">${data.seats.join(', ')}</div><div class="stat-label">Seat</div></div>
     <div class="stat"><div class="stat-value ${mpColor}">${data.avg_matchpoint_pct.toFixed(1)}%</div><div class="stat-label">Avg MP%</div></div>
   `;
-
-  const declMp = data.declaring_mp_pct != null ? data.declaring_mp_pct.toFixed(1)+'%' : '-';
-  const dummyMp = data.dummy_mp_pct != null ? data.dummy_mp_pct.toFixed(1)+'%' : '-';
-  const defMp = data.defending_mp_pct != null ? data.defending_mp_pct.toFixed(1)+'%' : '-';
-  const dvf = data.avg_declarer_vs_field != null ? (data.avg_declarer_vs_field >= 0 ? '+' : '') + data.avg_declarer_vs_field.toFixed(2) : '-';
-
+  const f = (v, fmt) => v != null ? (fmt ? fmt(v) : v) : '-';
   document.getElementById('player-summary2').innerHTML = `
     <div class="stat"><div class="stat-value">${data.boards_played}</div><div class="stat-label">Boards</div></div>
     <div class="stat"><div class="stat-value">${data.boards_declared}</div><div class="stat-label">Declared</div></div>
-    <div class="stat"><div class="stat-value">${declMp}</div><div class="stat-label">Declaring</div></div>
-    <div class="stat"><div class="stat-value">${dummyMp}</div><div class="stat-label">Dummy</div></div>
-    <div class="stat"><div class="stat-value">${defMp}</div><div class="stat-label">Defending</div></div>
-    <div class="stat"><div class="stat-value">${dvf}</div><div class="stat-label">Decl vs Field</div></div>
+    <div class="stat"><div class="stat-value">${f(data.declaring_mp_pct, v=>v.toFixed(1)+'%')}</div><div class="stat-label">Declaring</div></div>
+    <div class="stat"><div class="stat-value">${f(data.dummy_mp_pct, v=>v.toFixed(1)+'%')}</div><div class="stat-label">Dummy</div></div>
+    <div class="stat"><div class="stat-value">${f(data.defending_mp_pct, v=>v.toFixed(1)+'%')}</div><div class="stat-label">Defending</div></div>
+    <div class="stat"><div class="stat-value">${f(data.avg_declarer_vs_field, v=>(v>=0?'+':'')+v.toFixed(2))}</div><div class="stat-label">Decl vs Field</div></div>
     <div class="stat"><div class="stat-value">${data.field_contract_pct.toFixed(0)}%</div><div class="stat-label">Field Contract</div></div>
   `;
 
@@ -366,12 +312,8 @@ function renderPlayerAnalysis(data) {
     <th class="text-right">MP%</th><th>Field</th><th>Cause</th><th>Notes</th>
   </tr>`;
 
-  document.getElementById('player-tbody').innerHTML = data.board_results.map(r => {
-    const boardCell = r.bbo_url
-      ? `<a href="javascript:void(0)" onclick="openBoardDetail(${r.board_number}, '${r.bbo_url.replace(/'/g, "\\'")}')">${r.board_number}</a>`
-      : `<a href="javascript:void(0)" onclick="openBoardDetailNoDeal(${r.board_number})">${r.board_number}</a>`;
-    return `<tr>
-    <td>${boardCell}</td>
+  document.getElementById('player-tbody').innerHTML = data.board_results.map(r => `<tr>
+    <td><a href="javascript:void(0)" onclick="goToBoard(${r.board_number})">${r.board_number}</a></td>
     <td>${r.direction}</td>
     <td>${fmtContract(r.result_str)}</td>
     <td class="text-right">${r.player_score}</td>
@@ -379,51 +321,57 @@ function renderPlayerAnalysis(data) {
     <td>${fmtField(r.field_contract, r.matched_field_contract)}</td>
     <td><span class="cause cause-${r.cause}">${r.cause}</span></td>
     <td style="white-space:normal;max-width:200px;">${r.notes}</td>
-  </tr>`;
-  }).join('');
+  </tr>`).join('');
 }
 
-function clickPartner(name) {
-  // Switch to player grid and select the partner
-  showGrid('players');
+function goToPlayer(name) {
+  switchView('players');
   const btns = document.querySelectorAll('.name-grid button');
-  for (const btn of btns) {
-    if (btn.textContent === name) { selectPlayer(btn, name); return; }
-  }
+  for (const btn of btns) { if (btn.textContent === name) { selectPlayer(btn, name); return; } }
+  selectPlayer(null, name);
 }
 
-// ==================== Board Detail ====================
-
-async function openBoardDetail(boardNum, bboUrl) {
-  hideResults();
-  showLoading(true); showError('');
+// ==================== Board ====================
+async function selectBoard(btn, num) {
+  document.querySelectorAll('.board-grid button:not(.nav-arrow)').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  currentBoard = num;
+  showLoading(true); hideAll(); showError('');
   try {
-    const res = await fetch(`${BASE}/api/board?session=${sessionId}&num=${boardNum}`);
+    const res = await fetch(`${BASE}/api/board?session=${sessionId}&num=${num}`);
     if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
-    renderBoardDetail(data, bboUrl);
+    renderBoard(await res.json());
   } catch (e) { showError(e.message); }
   finally { showLoading(false); }
 }
 
-async function openBoardDetailNoDeal(boardNum) {
-  hideResults();
-  showLoading(true); showError('');
-  try {
-    const res = await fetch(`${BASE}/api/board?session=${sessionId}&num=${boardNum}`);
-    if (!res.ok) throw new Error(await res.text());
-    renderBoardDetail(await res.json(), null);
-  } catch (e) { showError(e.message); }
-  finally { showLoading(false); }
+function goToBoard(num) {
+  // Switch to board view and load that board
+  document.getElementById('tab-players').classList.remove('active');
+  document.getElementById('tab-boards').classList.add('active');
+  document.getElementById('player-grid').classList.add('hidden');
+  hideAll();
+  showBoardGrid();
+  currentBoard = num;
+  // Highlight the button
+  document.querySelectorAll('.board-grid button:not(.nav-arrow)').forEach(b => {
+    b.classList.toggle('active', parseInt(b.textContent) === num);
+  });
+  selectBoard(null, num);
 }
 
-function renderBoardDetail(data, bboUrl) {
-  const div = document.getElementById('board-detail');
-  div.classList.remove('hidden');
+function navBoard(delta) {
+  if (!currentBoard) { if (cachedBoards.length) goToBoard(cachedBoards[0]); return; }
+  const idx = cachedBoards.indexOf(currentBoard);
+  const next = idx + delta;
+  if (next >= 0 && next < cachedBoards.length) goToBoard(cachedBoards[next]);
+}
 
+function renderBoard(data) {
+  document.getElementById('board-results').classList.remove('hidden');
   const viewer = document.getElementById('board-viewer');
-  if (bboUrl) {
-    viewer.src = bboUrl;
+  if (data.bbo_url) {
+    viewer.src = data.bbo_url;
     viewer.classList.remove('hidden');
   } else {
     viewer.classList.add('hidden');
@@ -444,39 +392,39 @@ function renderBoardDetail(data, bboUrl) {
     <th class="text-right">EW MP%</th><th>EW Cause</th>
   </tr>`;
 
-  document.getElementById('board-tbody').innerHTML = data.results.map(r => `<tr>
-    <td>${r.ns_pair}</td>
-    <td>${r.ew_pair}</td>
+  document.getElementById('board-tbody').innerHTML = data.results.map(r => {
+    // Highlight declarer: if declarer is N or S, bold NS pair; if E or W, bold EW pair
+    const declNS = r.declarer_direction === 'N' || r.declarer_direction === 'S';
+    const nsCls = declNS ? 'declarer' : '';
+    const ewCls = !declNS ? 'declarer' : '';
+    // Make player names clickable
+    const nsNames = r.ns_pair.split(' & ').map(n =>
+      `<a href="javascript:void(0)" onclick="goToPlayer('${esc(n.trim())}')">${n.trim()}</a>`
+    ).join(' &amp; ');
+    const ewNames = r.ew_pair.split(' & ').map(n =>
+      `<a href="javascript:void(0)" onclick="goToPlayer('${esc(n.trim())}')">${n.trim()}</a>`
+    ).join(' &amp; ');
+    return `<tr>
+    <td class="${nsCls}">${nsNames}</td>
+    <td class="${ewCls}">${ewNames}</td>
     <td>${fmtContract(r.result_str)}</td>
     <td class="text-right">${r.ns_score}</td>
     <td class="text-right">${fmtMp(r.ns_analysis.matchpoint_pct)}</td>
     <td><span class="cause cause-${r.ns_analysis.cause}">${r.ns_analysis.cause}</span> ${r.ns_analysis.notes}</td>
     <td class="text-right">${fmtMp(r.ew_analysis.matchpoint_pct)}</td>
     <td><span class="cause cause-${r.ew_analysis.cause}">${r.ew_analysis.cause}</span> ${r.ew_analysis.notes}</td>
-  </tr>`).join('');
-}
-
-// ==================== Render Board (from grid) ====================
-
-function renderBoardAnalysis(data) {
-  renderBoardDetail(data, null);
-  // If any result has a BBO URL we could use, we'd need it from the API
-  // For now, board grid view shows analysis without hand viewer
+  </tr>`;
+  }).join('');
 }
 
 // ==================== Helpers ====================
-
 function suitSymbol(s) {
   switch(s) {
-    case 'S': return '<span class="suit-black">\u2660</span>';
-    case 'H': return '<span class="suit-red">\u2665</span>';
-    case 'D': return '<span class="suit-red">\u2666</span>';
-    case 'C': return '<span class="suit-black">\u2663</span>';
-    case 'NT': return 'NT';
-    default: return s;
+    case 'S': return '<span class="suit-black">\u2660</span>'; case 'H': return '<span class="suit-red">\u2665</span>';
+    case 'D': return '<span class="suit-red">\u2666</span>'; case 'C': return '<span class="suit-black">\u2663</span>';
+    case 'NT': return 'NT'; default: return s;
   }
 }
-
 function suitify(str) {
   if (!str) return '';
   str = str.replace(/(\d)(NT)/g, (_, d, s) => d + suitSymbol(s));
@@ -486,33 +434,26 @@ function suitify(str) {
   str = str.replace(/\((NT)\)/g, (_, s) => '(' + suitSymbol(s) + ')');
   return str;
 }
-
 function fmtContract(str) {
   if (!str || str === 'Pass') return str || '';
   const m = str.match(/^(\d)(NT|[SHDC])(.*)$/);
   if (!m) return str;
   const full = m[1] + suitSymbol(m[2]) + m[3];
-  if (str.includes('-')) return `<span class="contract-down">${full}</span>`;
-  return `<span class="contract-made">${full}</span>`;
+  return str.includes('-') ? `<span class="contract-down">${full}</span>` : `<span class="contract-made">${full}</span>`;
 }
-
-function fmtField(str, matched) {
-  if (!str) return '';
-  return (matched ? '=' : '') + suitify(str);
-}
-
+function fmtField(str, matched) { return str ? (matched ? '=' : '') + suitify(str) : ''; }
 function fmtMp(pct) {
   const cls = pct >= 50 ? 'mp-good' : 'mp-bad';
-  const barColor = pct >= 60 ? 'var(--good)' : pct >= 40 ? '#eab308' : 'var(--play)';
-  return `<span class="${cls}">${pct.toFixed(1)}%</span> <span class="mp-bar"><span class="mp-fill" style="width:${pct}%;background:${barColor}"></span></span>`;
+  const bar = pct >= 60 ? 'var(--good)' : pct >= 40 ? '#eab308' : 'var(--play)';
+  return `<span class="${cls}">${pct.toFixed(1)}%</span> <span class="mp-bar"><span class="mp-fill" style="width:${pct}%;background:${bar}"></span></span>`;
 }
-
+function esc(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
 function showLoading(show) { document.getElementById('loading').classList.toggle('hidden', !show); }
 function showError(msg) { const el = document.getElementById('error'); el.textContent = msg; el.classList.toggle('hidden', !msg); }
-function hideResults() {
+function hideAll() {
   document.getElementById('player-results').classList.add('hidden');
-  document.getElementById('board-detail').classList.add('hidden');
-  document.getElementById('board-viewer').src = '';
+  document.getElementById('board-results').classList.add('hidden');
+  const v = document.getElementById('board-viewer'); v.src = ''; v.classList.add('hidden');
 }
 </script>
 </body>
