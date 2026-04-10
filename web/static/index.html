@@ -234,6 +234,10 @@ tr:hover td { background: #f1f5f9; }
 .suit-red { color: #dc2626; }
 .suit-black { color: #212529; }
 
+/* Board links */
+td a { color: var(--primary); text-decoration: none; font-weight: 500; }
+td a:hover { text-decoration: underline; }
+
 /* Loading / empty states */
 .loading { text-align: center; padding: 3rem; color: var(--text-muted); }
 .hidden { display: none; }
@@ -434,8 +438,12 @@ function renderPlayerAnalysis(data) {
     <th class="text-right">MP%</th><th>Field</th><th>Cause</th><th>Notes</th>
   </tr>`;
 
-  document.getElementById('player-tbody').innerHTML = data.board_results.map(r => `<tr>
-    <td>${r.board_number}</td>
+  document.getElementById('player-tbody').innerHTML = data.board_results.map(r => {
+    const boardCell = r.bbo_url
+      ? `<a href="${r.bbo_url}" target="_blank" title="View hand in BBO">${r.board_number}</a>`
+      : `${r.board_number}`;
+    return `<tr>
+    <td>${boardCell}</td>
     <td>${r.direction}</td>
     <td>${fmtContract(r.result_str)}</td>
     <td class="text-right">${r.player_score}</td>
@@ -443,7 +451,8 @@ function renderPlayerAnalysis(data) {
     <td>${fmtField(r.field_contract, r.matched_field_contract)}</td>
     <td><span class="cause cause-${r.cause}">${r.cause}</span></td>
     <td style="white-space:normal;max-width:200px;">${r.notes}</td>
-  </tr>`).join('');
+  </tr>`;
+  }).join('');
 }
 
 // ==================== Render Board ====================
@@ -480,23 +489,47 @@ function renderBoardAnalysis(data) {
 
 // ==================== Helpers ====================
 
-/** Replace strain letters with colored suit symbols */
-function suitify(str) {
-  if (!str) return '';
-  return str
-    .replace(/NT/g, 'NT')
-    .replace(/S/g, '<span class="suit-black">\u2660</span>')
-    .replace(/H/g, '<span class="suit-red">\u2665</span>')
-    .replace(/D/g, '<span class="suit-red">\u2666</span>')
-    .replace(/C/g, '<span class="suit-black">\u2663</span>');
+/** Replace a single strain letter/word with colored suit symbol */
+function suitSymbol(s) {
+  switch(s) {
+    case 'S': return '<span class="suit-black">\u2660</span>';
+    case 'H': return '<span class="suit-red">\u2665</span>';
+    case 'D': return '<span class="suit-red">\u2666</span>';
+    case 'C': return '<span class="suit-black">\u2663</span>';
+    case 'NT': return 'NT';
+    default: return s;
+  }
 }
 
-/** Format a contract result string with suit symbols and making/down color */
+/** Replace strain letters with suit symbols only in contract contexts.
+ *  Matches: digit + strain (e.g., "4S", "3NT", "2H") and standalone
+ *  strain letters in parentheses or "vs" patterns (board type strings).
+ *  Does NOT replace direction letters (N/S/E/W after strain). */
+function suitify(str) {
+  if (!str) return '';
+  // Replace digit + NT first (before single-letter strains)
+  str = str.replace(/(\d)(NT)/g, (_, d, s) => d + suitSymbol(s));
+  // Replace digit + single strain letter (not followed by another letter that's part of the token)
+  str = str.replace(/(\d)([SHDC])(?![a-zA-Z])/g, (_, d, s) => d + suitSymbol(s));
+  // Replace standalone strain in parens or after "vs " (board type: "Competitive (S vs H)")
+  str = str.replace(/\(([SHDCN]+)\)/g, (_, s) => '(' + suitSymbol(s) + ')');
+  str = str.replace(/\(([SHDCN]+) vs ([SHDCN]+)\)/g, (_, a, b) => '(' + suitSymbol(a) + ' vs ' + suitSymbol(b) + ')');
+  return str;
+}
+
+/** Format a contract result string with suit symbols and making/down color.
+ *  Input format: "4SN=", "3NTE+1", "2HS-1", "Pass" */
 function fmtContract(str) {
   if (!str || str === 'Pass') return str || '';
-  const colored = suitify(str);
-  if (str.includes('-')) return `<span class="contract-down">${colored}</span>`;
-  return `<span class="contract-made">${colored}</span>`;
+  // Parse: level(1) + strain(1-2) + declarer(1) + result
+  const m = str.match(/^(\d)(NT|[SHDC])(.*)$/);
+  if (!m) return str;
+  const level = m[1];
+  const strain = suitSymbol(m[2]);
+  const rest = m[3]; // declarer + result, e.g., "N=", "E+1", "S-2"
+  const full = level + strain + rest;
+  if (str.includes('-')) return `<span class="contract-down">${full}</span>`;
+  return `<span class="contract-made">${full}</span>`;
 }
 
 /** Format a field contract with suit symbols */

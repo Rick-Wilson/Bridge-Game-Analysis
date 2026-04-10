@@ -8,6 +8,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{Html, IntoResponse, Json},
 };
+use bridge_club_analysis::{ContractResult, SeatPlayers};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::path::Path;
@@ -190,7 +191,33 @@ pub async fn analyze_player(
         format!("Player '{}' not found", name),
     ))?;
 
-    let response: PlayerAnalysisResponse = (&analysis).into();
+    let mut response: PlayerAnalysisResponse = (&analysis).into();
+
+    // Populate BBO hand viewer URLs
+    for (i, br) in analysis.board_results.iter().enumerate() {
+        if let Some(board_data) = game_data.boards.get(&br.board_number) {
+            let board_result = game_data.results.iter().find(|r| {
+                r.board_number == br.board_number
+                    && (r.ns_pair.contains(&analysis.player)
+                        || r.ew_pair.contains(&analysis.player))
+            });
+
+            let seat_players =
+                board_result.map(|r| SeatPlayers::from_partnerships(&r.ns_pair, &r.ew_pair));
+            let contract_result = board_result.and_then(|r| {
+                r.contract.as_ref().map(|c| ContractResult {
+                    contract: c.clone(),
+                    declarer: r.declarer_direction,
+                })
+            });
+
+            if let Some(url) =
+                board_data.bbo_handviewer_url(seat_players.as_ref(), contract_result.as_ref())
+            {
+                response.board_results[i].bbo_url = Some(url);
+            }
+        }
+    }
 
     let duration = start.elapsed().as_millis() as u64;
     let logger = AuditLogger::new(&state.log_dir);
