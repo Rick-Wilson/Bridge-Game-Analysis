@@ -270,7 +270,6 @@ td a:hover { text-decoration: underline; }
     <input type="file" id="file-input" multiple accept=".bws,.pbn,.BWS,.PBN">
     <div id="file-names" style="margin-top: 0.5rem; color: var(--text-muted); font-size: 0.85rem;"></div>
     <div id="pbn-hint" class="hidden" style="margin-top: 0.5rem; color: var(--auction); font-size: 0.85rem;"></div>
-    <button id="upload-btn" class="btn hidden" style="margin-top: 0.5rem;">Upload &amp; Analyze</button>
   </div>
 
   <!-- PBN missing notice (shown after BWS-only upload) -->
@@ -328,28 +327,18 @@ let currentView = 'player';
 // ==================== Upload ====================
 
 const fileInput = document.getElementById('file-input');
-const uploadBtn = document.getElementById('upload-btn');
 const fileNames = document.getElementById('file-names');
 const uploadArea = document.getElementById('upload-area');
 
 fileInput.addEventListener('change', () => {
   const files = Array.from(fileInput.files);
+  if (!files.length) return;
+
   const names = files.map(f => f.name).join(', ');
   fileNames.textContent = names;
-  uploadBtn.classList.toggle('hidden', files.length === 0);
 
-  // If only BWS selected, hint about matching PBN
-  const hint = document.getElementById('pbn-hint');
-  const hasBws = files.some(f => f.name.toLowerCase().endsWith('.bws'));
-  const hasPbn = files.some(f => f.name.toLowerCase().endsWith('.pbn'));
-  if (hasBws && !hasPbn) {
-    const bwsName = files.find(f => f.name.toLowerCase().endsWith('.bws')).name;
-    const expectedPbn = bwsName.replace(/\.bws$/i, '.pbn');
-    hint.textContent = `\u26a0 No PBN file selected. Look for "${expectedPbn}" in the same folder \u2014 select both files together for hand viewer links and DD analysis.`;
-    hint.classList.remove('hidden');
-  } else {
-    hint.classList.add('hidden');
-  }
+  // Upload immediately
+  doUpload(files);
 });
 
 // Drag and drop
@@ -358,16 +347,16 @@ uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('drag
 uploadArea.addEventListener('drop', e => {
   e.preventDefault();
   uploadArea.classList.remove('dragover');
-  fileInput.files = e.dataTransfer.files;
-  fileInput.dispatchEvent(new Event('change'));
+  const files = Array.from(e.dataTransfer.files);
+  if (files.length) {
+    fileNames.textContent = files.map(f => f.name).join(', ');
+    doUpload(files);
+  }
 });
 
 let hasPbnFile = false;
 
-uploadBtn.addEventListener('click', async () => {
-  const files = fileInput.files;
-  if (!files.length) return;
-
+async function doUpload(files) {
   const formData = new FormData();
   hasPbnFile = false;
   for (const f of files) {
@@ -399,7 +388,7 @@ uploadBtn.addEventListener('click', async () => {
   } finally {
     showLoading(false);
   }
-});
+}
 
 // Handle adding PBN after initial upload
 document.getElementById('pbn-add-input').addEventListener('change', async (e) => {
@@ -439,8 +428,6 @@ document.getElementById('new-file-btn').addEventListener('click', () => {
   hasPbnFile = false;
   fileInput.value = '';
   fileNames.textContent = '';
-  document.getElementById('pbn-hint').classList.add('hidden');
-  uploadBtn.classList.add('hidden');
   uploadArea.classList.remove('hidden');
   document.getElementById('controls').classList.add('hidden');
   document.getElementById('pbn-notice').classList.add('hidden');
