@@ -15,6 +15,14 @@ use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
+/// Serve the ACBL download help screenshot.
+pub async fn acbl_help_image() -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "image/png")],
+        include_bytes!("../static/acbl-download-help.png").as_slice(),
+    )
+}
+
 /// Health check endpoint.
 pub async fn health() -> Json<HealthResponse> {
     Json(HealthResponse {

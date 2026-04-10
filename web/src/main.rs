@@ -93,6 +93,7 @@ async fn main() {
     // Main app with base path
     let app = Router::new()
         .route("/", get(api::index_page))
+        .route("/static/acbl-download-help.png", get(api::acbl_help_image))
         .nest("/api", api_routes)
         .nest("/admin", admin_routes)
         .route("/health", get(api::health))

@@ -272,6 +272,20 @@ td a:hover { text-decoration: underline; }
     <div id="pbn-hint" class="hidden" style="margin-top: 0.5rem; color: var(--auction); font-size: 0.85rem;"></div>
   </div>
 
+  <!-- Help: where to find the files -->
+  <details id="download-help" style="margin-bottom: 1rem;">
+    <summary style="cursor: pointer; color: var(--primary); font-size: 0.85rem; font-weight: 500;">Where do I find these files?</summary>
+    <div style="background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem; margin-top: 0.5rem;">
+      <p style="font-size: 0.85rem; margin-bottom: 0.75rem;">
+        On your game's page at <strong>ACBL Live for Clubs</strong>, look for the <strong>Reference Data</strong> section on the right side.
+        Download both files:</p>
+      <img src="{{BASE_PATH}}/static/acbl-download-help.png" alt="ACBL Live for Clubs showing download links for PBN and BWS files"
+           style="max-width: 100%; border: 1px solid var(--border); border-radius: var(--radius);">
+      <p style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.5rem;">
+        Select both the <strong>.BWS</strong> and <strong>.PBN</strong> files together when uploading (hold Cmd/Ctrl to multi-select).</p>
+    </div>
+  </details>
+
   <!-- PBN missing notice (shown after BWS-only upload) -->
   <div id="pbn-notice" class="hidden" style="background: #fef3c7; border: 1px solid #f59e0b; border-radius: var(--radius); padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem;">
     <strong>Tip:</strong> Upload the matching .PBN file to enable hand viewer links and double-dummy analysis.
