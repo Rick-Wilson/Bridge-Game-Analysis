@@ -565,9 +565,9 @@ async function fetchBBA(dealInfo) {
   const bbaEl = document.getElementById('bba-section');
   bbaEl.innerHTML = '<div class="bba-loading">Loading BBA auction...</div>';
   try {
-    const res = await fetch('https://bba.harmonicsystems.com/api/auction/generate', {
+    const res = await fetch(`${BASE}/api/bba-proxy`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-Client-Version': 'ClubGameAnalysis' },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ deal: { pbn: dealInfo.pbn, dealer: dealInfo.dealer, vulnerability: dealInfo.vulnerability } })
     });
     if (!res.ok) { bbaEl.innerHTML = '<div class="bba-loading">BBA unavailable</div>'; return; }

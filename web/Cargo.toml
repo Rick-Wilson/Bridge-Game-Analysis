@@ -23,3 +23,4 @@ chrono = "0.4"
 dotenvy = "0.15"
 uuid = { version = "1", features = ["v4"] }
 tempfile = "3"
+reqwest = { version = "0.12", features = ["json"] }

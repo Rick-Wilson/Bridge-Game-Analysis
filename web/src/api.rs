@@ -359,6 +359,38 @@ pub async fn analyze_board(
     Ok(Json(response))
 }
 
+/// Proxy BBA auction requests to avoid CORS issues.
+pub async fn bba_proxy(body: axum::body::Bytes) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let client = reqwest::Client::new();
+    let res = client
+        .post("https://bba.harmonicsystems.com/api/auction/generate")
+        .header("Content-Type", "application/json")
+        .header("X-Client-Version", "ClubGameAnalysis")
+        .body(body.to_vec())
+        .send()
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::BAD_GATEWAY,
+                format!("BBA request failed: {}", e),
+            )
+        })?;
+
+    let status = StatusCode::from_u16(res.status().as_u16()).unwrap_or(StatusCode::BAD_GATEWAY);
+    let body = res.bytes().await.map_err(|e| {
+        (
+            StatusCode::BAD_GATEWAY,
+            format!("BBA response error: {}", e),
+        )
+    })?;
+
+    Ok((
+        status,
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body,
+    ))
+}
+
 // ==================== Admin ====================
 
 /// Admin dashboard page.
