@@ -447,7 +447,7 @@ function fmtMp(pct) {
   const bar = pct >= 60 ? 'var(--good)' : pct >= 40 ? '#eab308' : 'var(--play)';
   return `<span class="${cls}">${pct.toFixed(1)}%</span> <span class="mp-bar"><span class="mp-fill" style="width:${pct}%;background:${bar}"></span></span>`;
 }
-function esc(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+function esc(s) { return (s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
 /** Abbreviate a name for table display: "David Bailey" -> "David B." */
 function abbrev(name) {
   if (!name) return '';
