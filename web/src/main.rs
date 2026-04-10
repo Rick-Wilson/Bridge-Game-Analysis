@@ -43,8 +43,7 @@ async fn main() {
         .ok()
         .and_then(|p| p.parse().ok())
         .unwrap_or(3001);
-    let base_path =
-        std::env::var("BASE_PATH").unwrap_or_else(|_| "/club-game-analysis/app".to_string());
+    let base_path = std::env::var("BASE_PATH").unwrap_or_else(|_| String::new());
     let admin_key = std::env::var("ADMIN_KEY").ok();
 
     // Set up directories
@@ -102,15 +101,27 @@ async fn main() {
         .layer(DefaultBodyLimit::max(20 * 1024 * 1024)) // 20MB for BWS files
         .with_state(state);
 
-    // Nest under base path. Also handle trailing slash by redirecting.
-    let redirect_to = base_path.clone();
-    let root = Router::new().nest(&base_path, app).route(
-        &format!("{}/", base_path),
-        get(move || async move { axum::response::Redirect::permanent(&redirect_to) }),
-    );
+    // Nest under base path if set, otherwise serve at root
+    let root = if base_path.is_empty() {
+        app
+    } else {
+        let redirect_to = base_path.clone();
+        Router::new().nest(&base_path, app).route(
+            &format!("{}/", base_path),
+            get(move || async move { axum::response::Redirect::permanent(&redirect_to) }),
+        )
+    };
 
     let addr = SocketAddr::new(host.parse().expect("Invalid HOST"), port);
-    tracing::info!("Starting server at http://{}{}", addr, base_path);
+    tracing::info!(
+        "Starting server at http://{}{}",
+        addr,
+        if base_path.is_empty() {
+            "/"
+        } else {
+            &base_path
+        }
+    );
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
