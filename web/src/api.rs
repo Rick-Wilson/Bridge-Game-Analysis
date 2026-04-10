@@ -302,25 +302,22 @@ pub async fn analyze_board(
 
     // Generate per-row BBO URLs and board-level deal info
     if let Some(board_data) = game_data.boards.get(&board_num) {
-        // Per-row BBO URLs with each table's specific players and contract
-        let board_results: Vec<_> = game_data
-            .results
-            .iter()
-            .filter(|r| r.board_number == board_num)
-            .collect();
-
-        // Match results to response rows (same order as analysis.results)
-        for (i, result) in board_results.iter().enumerate() {
-            if i >= response.results.len() {
-                break;
-            }
-            let seat_players = SeatPlayers::from_partnerships(&result.ns_pair, &result.ew_pair);
-            let contract_result = result.contract.as_ref().map(|c| ContractResult {
-                contract: c.clone(),
-                declarer: result.declarer_direction,
+        // Per-row BBO URLs: match response rows to raw results by NS pair names
+        for resp_row in &mut response.results {
+            let raw_match = game_data.results.iter().find(|r| {
+                r.board_number == board_num
+                    && r.ns_pair.first_player().display_name() == resp_row.ns_player1
+                    && r.ns_pair.second_player().display_name() == resp_row.ns_player2
             });
-            response.results[i].bbo_url =
-                board_data.bbo_handviewer_url(Some(&seat_players), contract_result.as_ref());
+            if let Some(result) = raw_match {
+                let seat_players = SeatPlayers::from_partnerships(&result.ns_pair, &result.ew_pair);
+                let contract_result = result.contract.as_ref().map(|c| ContractResult {
+                    contract: c.clone(),
+                    declarer: result.declarer_direction,
+                });
+                resp_row.bbo_url =
+                    board_data.bbo_handviewer_url(Some(&seat_players), contract_result.as_ref());
+            }
         }
 
         // Use first result's URL as the board-level default
@@ -341,7 +338,7 @@ pub async fn analyze_board(
                 bridge_club_analysis::Direction::West => "W",
             };
             response.deal_info = Some(BoardDealInfo {
-                pbn: Some(format!("{}:{}", dealer_str, deal.to_pbn(board_data.dealer))),
+                pbn: Some(deal.to_pbn(board_data.dealer)),
                 dealer: dealer_str.to_string(),
                 vulnerability: vul_str.to_string(),
             });
