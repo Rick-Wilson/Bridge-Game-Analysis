@@ -44,7 +44,7 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(3001);
     let base_path =
-        std::env::var("BASE_PATH").unwrap_or_else(|_| "/club-game-analysis".to_string());
+        std::env::var("BASE_PATH").unwrap_or_else(|_| "/club-game-analysis/app".to_string());
     let admin_key = std::env::var("ADMIN_KEY").ok();
 
     // Set up directories
