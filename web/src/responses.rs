@@ -83,6 +83,7 @@ pub struct BoardAnalysisResponse {
     pub field_contract: Option<String>,
     pub board_type: String,
     pub bbo_url: Option<String>,
+    pub deal_info: Option<BoardDealInfo>,
     pub results: Vec<BoardTableResultResponse>,
 }
 
@@ -102,6 +103,18 @@ pub struct BoardTableResultResponse {
     pub ns_score: i32,
     pub ns_analysis: DirectionAnalysisResponse,
     pub ew_analysis: DirectionAnalysisResponse,
+    pub bbo_url: Option<String>,
+}
+
+/// Board-level data needed for DD/BBA integration
+#[derive(Serialize)]
+pub struct BoardDealInfo {
+    /// PBN deal string (e.g., "N:AKQ3.AJ6.A852.53 ...")
+    pub pbn: Option<String>,
+    /// Dealer (N/E/S/W)
+    pub dealer: String,
+    /// Vulnerability (None/NS/EW/Both)
+    pub vulnerability: String,
 }
 
 #[derive(Serialize)]
@@ -265,6 +278,7 @@ impl From<&BoardTableResult> for BoardTableResultResponse {
             ns_score: r.ns_score,
             ns_analysis: (&r.ns_analysis).into(),
             ew_analysis: (&r.ew_analysis).into(),
+            bbo_url: None, // Populated by caller
         }
     }
 }
@@ -275,7 +289,8 @@ impl From<&BoardAnalysis> for BoardAnalysisResponse {
             board_number: a.board_number,
             field_contract: a.field_contract.as_ref().map(|c| c.display()),
             board_type: a.board_type.to_string(),
-            bbo_url: None, // Populated by caller
+            bbo_url: None,   // Populated by caller
+            deal_info: None, // Populated by caller
             results: a.results.iter().map(|r| r.into()).collect(),
         }
     }

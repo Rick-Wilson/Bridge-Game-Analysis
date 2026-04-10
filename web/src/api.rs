@@ -300,23 +300,52 @@ pub async fn analyze_board(
 
     let mut response: BoardAnalysisResponse = (&analysis).into();
 
-    // Generate BBO hand viewer URL for this board (no player-specific names)
+    // Generate per-row BBO URLs and board-level deal info
     if let Some(board_data) = game_data.boards.get(&board_num) {
-        // Use first result's partnerships for player names in the viewer
-        let first_result = game_data
+        // Per-row BBO URLs with each table's specific players and contract
+        let board_results: Vec<_> = game_data
             .results
             .iter()
-            .find(|r| r.board_number == board_num);
-        let seat_players =
-            first_result.map(|r| SeatPlayers::from_partnerships(&r.ns_pair, &r.ew_pair));
-        let contract_result = first_result.and_then(|r| {
-            r.contract.as_ref().map(|c| ContractResult {
+            .filter(|r| r.board_number == board_num)
+            .collect();
+
+        // Match results to response rows (same order as analysis.results)
+        for (i, result) in board_results.iter().enumerate() {
+            if i >= response.results.len() {
+                break;
+            }
+            let seat_players = SeatPlayers::from_partnerships(&result.ns_pair, &result.ew_pair);
+            let contract_result = result.contract.as_ref().map(|c| ContractResult {
                 contract: c.clone(),
-                declarer: r.declarer_direction,
-            })
-        });
-        response.bbo_url =
-            board_data.bbo_handviewer_url(seat_players.as_ref(), contract_result.as_ref());
+                declarer: result.declarer_direction,
+            });
+            response.results[i].bbo_url =
+                board_data.bbo_handviewer_url(Some(&seat_players), contract_result.as_ref());
+        }
+
+        // Use first result's URL as the board-level default
+        response.bbo_url = response.results.first().and_then(|r| r.bbo_url.clone());
+
+        // Deal info for DD table and BBA auction
+        if let Some(deal) = &board_data.deal {
+            let vul_str = match board_data.vulnerability {
+                bridge_club_analysis::Vulnerability::None => "None",
+                bridge_club_analysis::Vulnerability::NorthSouth => "NS",
+                bridge_club_analysis::Vulnerability::EastWest => "EW",
+                bridge_club_analysis::Vulnerability::Both => "Both",
+            };
+            let dealer_str = match board_data.dealer {
+                bridge_club_analysis::Direction::North => "N",
+                bridge_club_analysis::Direction::South => "S",
+                bridge_club_analysis::Direction::East => "E",
+                bridge_club_analysis::Direction::West => "W",
+            };
+            response.deal_info = Some(BoardDealInfo {
+                pbn: Some(format!("{}:{}", dealer_str, deal.to_pbn(board_data.dealer))),
+                dealer: dealer_str.to_string(),
+                vulnerability: vul_str.to_string(),
+            });
+        }
     }
 
     let duration = start.elapsed().as_millis() as u64;

@@ -78,15 +78,29 @@ tr:hover td { background: #f1f5f9; }
 td a { color: var(--primary); text-decoration: none; font-weight: 500; cursor: pointer; }
 td a:hover { text-decoration: underline; }
 .declarer-name { font-weight: 700; }
-.row-highlight td { background: #eff6ff !important; }
+.row-highlight td { background: #dbeafe !important; border-top-color: #93c5fd !important; }
 
 /* Compact board table columns */
-th, td { font-size: 0.8rem; }
-.col-contract { width: 5.5rem; }
-.col-score { width: 4.5rem; }
-.col-mp { width: 6.5rem; }
+th { font-size: 0.7rem; padding: 0.375rem 0.4rem; }
+td { font-size: 0.8rem; padding: 0.375rem 0.4rem; }
+.col-contract { max-width: 5rem; }
+.col-score { max-width: 3.5rem; }
+tr.clickable-row { cursor: pointer; }
+tr.clickable-row:hover td { background: #e0e7ff; }
 
-.hand-viewer-frame { width: 100%; height: 500px; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 1rem; }
+/* Board viewer + side panel layout */
+.viewer-row { display: flex; gap: 1rem; margin-bottom: 1rem; }
+.viewer-col { flex: 1; min-width: 0; }
+.side-panel { width: 280px; flex-shrink: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem; font-size: 0.8rem; overflow-y: auto; max-height: 520px; }
+.side-panel h4 { font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 0.5rem; }
+.side-panel table { font-size: 0.75rem; }
+.side-panel th, .side-panel td { padding: 3px 5px; border: 1px solid var(--border); text-align: center; }
+.side-panel th { background: var(--bg); }
+.dd-highlight-green { background: #d4edda; color: #155724; font-weight: 700; }
+.dd-highlight-red { background: #f8d7da; color: #721c24; font-weight: 700; }
+.bba-loading { color: var(--text-muted); font-size: 0.75rem; text-align: center; padding: 0.5rem; }
+
+.hand-viewer-frame { width: 100%; height: 500px; border: 1px solid var(--border); border-radius: var(--radius); }
 
 .loading { text-align: center; padding: 3rem; color: var(--text-muted); }
 .hidden { display: none; }
@@ -100,6 +114,8 @@ th, td { font-size: 0.8rem; }
   td, th { padding: 0.3rem 0.4rem; }
   .hand-viewer-frame { height: 380px; }
   .event-header { flex-direction: column; }
+  .viewer-row { flex-direction: column; }
+  .side-panel { width: 100%; max-height: none; }
 }
 </style>
 </head>
@@ -165,9 +181,17 @@ th, td { font-size: 0.8rem; }
     </div>
   </div>
 
-  <!-- Board results (hand viewer + table) -->
+  <!-- Board results (hand viewer + side panel + table) -->
   <div id="board-results" class="hidden">
-    <iframe id="board-viewer" class="hand-viewer-frame hidden" sandbox="allow-scripts allow-same-origin" allowfullscreen></iframe>
+    <div id="viewer-row" class="viewer-row hidden">
+      <div class="viewer-col">
+        <iframe id="board-viewer" class="hand-viewer-frame" sandbox="allow-scripts allow-same-origin" allowfullscreen></iframe>
+      </div>
+      <div id="side-panel" class="side-panel">
+        <div id="dd-section"><div class="bba-loading">Loading DD analysis...</div></div>
+        <div id="bba-section" style="margin-top:0.75rem;border-top:1px solid var(--border);padding-top:0.75rem;"><div class="bba-loading">Loading BBA auction...</div></div>
+      </div>
+    </div>
     <div id="board-summary" class="summary"></div>
     <div class="results-table">
       <table><thead id="board-thead"></thead><tbody id="board-tbody"></tbody></table>
@@ -376,15 +400,35 @@ function navBoard(delta) {
   if (next >= 0 && next < cachedBoards.length) goToBoard(cachedBoards[next]);
 }
 
+let currentBoardData = null;
+let activeRowIdx = 0;
+
 function renderBoard(data) {
+  currentBoardData = data;
   document.getElementById('board-results').classList.remove('hidden');
-  const viewer = document.getElementById('board-viewer');
-  if (data.bbo_url) {
-    viewer.src = data.bbo_url;
-    viewer.classList.remove('hidden');
-  } else {
-    viewer.classList.add('hidden');
-    viewer.src = '';
+
+  // Determine initial row: player's row if navigating from player view, else first
+  activeRowIdx = 0;
+  if (currentPlayerName) {
+    for (let i = 0; i < data.results.length; i++) {
+      const r = data.results[i];
+      if ([r.ns_player1, r.ns_player2, r.ew_player1, r.ew_player2].includes(currentPlayerName)) {
+        activeRowIdx = i;
+        break;
+      }
+    }
+  }
+
+  // Show viewer row if any result has a URL
+  const hasViewer = data.results.some(r => r.bbo_url);
+  document.getElementById('viewer-row').classList.toggle('hidden', !hasViewer);
+  if (hasViewer) {
+    setViewerRow(activeRowIdx);
+    // Fetch DD and BBA data
+    if (data.deal_info) {
+      fetchDD(data.deal_info);
+      fetchBBA(data.deal_info);
+    }
   }
 
   document.getElementById('board-summary').innerHTML = `
@@ -397,26 +441,27 @@ function renderBoard(data) {
   document.getElementById('board-thead').innerHTML = `<tr>
     <th>NS Pair</th><th>EW Pair</th><th class="col-contract">Contract</th>
     <th class="text-right col-score">Score</th>
-    <th class="text-right col-mp">NS MP%</th><th>NS Cause</th>
-    <th class="text-right col-mp">EW MP%</th><th>EW Cause</th>
+    <th class="text-right">NS MP%</th><th>NS Cause</th>
+    <th class="text-right">EW MP%</th><th>EW Cause</th>
   </tr>`;
 
-  document.getElementById('board-tbody').innerHTML = data.results.map(r => {
+  renderBoardRows();
+}
+
+function renderBoardRows() {
+  const data = currentBoardData;
+  document.getElementById('board-tbody').innerHTML = data.results.map((r, idx) => {
     const dn = r.declarer_name;
-    // Bold the declarer's name, make all names clickable with full names for lookup
     const fmtP = (fullName, isDeclarer) => {
       const cls = isDeclarer ? 'declarer-name' : '';
-      return `<a href="javascript:void(0)" class="${cls}" onclick="goToPlayer('${esc(fullName)}')">${abbrev(fullName)}</a>`;
+      return `<a href="javascript:void(0)" class="${cls}" onclick="event.stopPropagation();goToPlayer('${esc(fullName)}')">${abbrev(fullName)}</a>`;
     };
     const nsP1 = fmtP(r.ns_player1, r.ns_player1 === dn);
     const nsP2 = fmtP(r.ns_player2, r.ns_player2 === dn);
     const ewP1 = fmtP(r.ew_player1, r.ew_player1 === dn);
     const ewP2 = fmtP(r.ew_player2, r.ew_player2 === dn);
-    // Highlight row if current player is in this result
-    const allNames = [r.ns_player1, r.ns_player2, r.ew_player1, r.ew_player2];
-    const isPlayerRow = currentPlayerName && allNames.includes(currentPlayerName);
-    const rowCls = isPlayerRow ? 'class="row-highlight"' : '';
-    return `<tr ${rowCls}>
+    const rowCls = idx === activeRowIdx ? 'clickable-row row-highlight' : 'clickable-row';
+    return `<tr class="${rowCls}" onclick="clickBoardRow(${idx})">
     <td>${nsP1} - ${nsP2}</td>
     <td>${ewP1} - ${ewP2}</td>
     <td>${fmtContract(r.result_str)}</td>
@@ -427,6 +472,131 @@ function renderBoard(data) {
     <td><span class="cause cause-${r.ew_analysis.cause}">${r.ew_analysis.cause}</span> ${r.ew_analysis.notes}</td>
   </tr>`;
   }).join('');
+}
+
+function clickBoardRow(idx) {
+  activeRowIdx = idx;
+  setViewerRow(idx);
+  renderBoardRows();
+}
+
+function setViewerRow(idx) {
+  const r = currentBoardData.results[idx];
+  const viewer = document.getElementById('board-viewer');
+  if (r && r.bbo_url) { viewer.src = r.bbo_url; }
+}
+
+// ==================== DD Table ====================
+async function fetchDD(dealInfo) {
+  const ddEl = document.getElementById('dd-section');
+  ddEl.innerHTML = '<div class="bba-loading">Loading DD analysis...</div>';
+  try {
+    const pbn = dealInfo.pbn.replace(/ /g, 'x');
+    const vul = dealInfo.vulnerability === 'Both' ? 'All' : dealInfo.vulnerability;
+    const url = `https://dds.bridgewebs.com/cgi-bin/bsol2/ddummy?request=m&dealstr=${encodeURIComponent(pbn)}&vul=${vul}&club=clubgameanalysis`;
+    const res = await fetch(url);
+    if (!res.ok) { ddEl.innerHTML = '<div class="bba-loading">DD unavailable</div>'; return; }
+    const text = await res.text();
+    const json = JSON.parse(text.trim());
+    if (!json.sess || !json.sess.ddtricks || json.sess.ddtricks.length < 20) {
+      ddEl.innerHTML = '<div class="bba-loading">DD unavailable</div>'; return;
+    }
+    renderDDTable(json.sess.ddtricks);
+  } catch (e) {
+    ddEl.innerHTML = '<div class="bba-loading">DD unavailable</div>';
+  }
+}
+
+function renderDDTable(ddtricks) {
+  function parseTrick(ch) {
+    if (ch >= '0' && ch <= '9') return parseInt(ch);
+    if (ch >= 'a' && ch <= 'd') return 10 + ch.charCodeAt(0) - 97;
+    if (ch >= 'A' && ch <= 'D') return 10 + ch.charCodeAt(0) - 65;
+    return 0;
+  }
+  const seats = ['N','S','E','W'];
+  const suits = ['NT','S','H','D','C'];
+  const suitHdrs = ['<span style="color:#000">\u2663</span>','<span style="color:#d00">\u2666</span>','<span style="color:#d00">\u2665</span>','<span style="color:#000">\u2660</span>','NT'];
+
+  let html = '<h4>Double Dummy</h4><table><thead><tr><th></th>';
+  for (let j = 0; j < 5; j++) html += `<th>${suitHdrs[j]}</th>`;
+  html += '</tr></thead><tbody>';
+  for (let i = 0; i < 4; i++) {
+    html += `<tr><td style="font-weight:700;background:var(--bg);">${seats[i]}</td>`;
+    for (let j = 0; j < 5; j++) {
+      const tricks = parseTrick(ddtricks[i*5+j]);
+      html += `<td>${tricks}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  document.getElementById('dd-section').innerHTML = html;
+}
+
+// ==================== BBA Auction ====================
+async function fetchBBA(dealInfo) {
+  const bbaEl = document.getElementById('bba-section');
+  bbaEl.innerHTML = '<div class="bba-loading">Loading BBA auction...</div>';
+  try {
+    const res = await fetch('https://bba.bridge-classroom.com/api/auction/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Client-Version': 'ClubGameAnalysis' },
+      body: JSON.stringify({ deal: { pbn: dealInfo.pbn, dealer: dealInfo.dealer, vulnerability: dealInfo.vulnerability } })
+    });
+    if (!res.ok) { bbaEl.innerHTML = '<div class="bba-loading">BBA unavailable</div>'; return; }
+    const result = await res.json();
+    if (result.success) {
+      renderBBAAuction(result, dealInfo.dealer);
+    } else {
+      bbaEl.innerHTML = '<div class="bba-loading">BBA unavailable</div>';
+    }
+  } catch (e) {
+    bbaEl.innerHTML = '<div class="bba-loading">BBA unavailable</div>';
+  }
+}
+
+function renderBBAAuction(result, dealer) {
+  const colOrder = ['W','N','E','S'];
+  const startCol = colOrder.indexOf(dealer);
+  const bids = result.auction || [];
+  const meanings = result.meanings || [];
+
+  let padded = [];
+  for (let p = 0; p < startCol; p++) padded.push({bid:'', idx:-1});
+  for (let b = 0; b < bids.length; b++) padded.push({bid:bids[b], idx:b});
+
+  let alerts = [];
+  let html = '<h4>BBA Auction</h4>';
+  html += '<table><thead><tr><th>W</th><th>N</th><th>E</th><th>S</th></tr></thead><tbody>';
+  for (let i = 0; i < padded.length; i += 4) {
+    html += '<tr>';
+    for (let j = 0; j < 4; j++) {
+      const c = padded[i+j];
+      if (!c || !c.bid) { html += '<td></td>'; continue; }
+      let sup = '';
+      if (meanings[c.idx] && meanings[c.idx].meaning && c.bid !== 'Pass') {
+        alerts.push({num: alerts.length+1, bid: c.bid, meaning: meanings[c.idx].meaning});
+        sup = `<sup style="color:#d00;font-size:9px;">${alerts.length}</sup>`;
+      }
+      html += `<td>${fmtBid(c.bid)}${sup}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  if (alerts.length) {
+    html += '<div style="font-size:0.7rem;margin-top:0.375rem;border-top:1px solid var(--border);padding-top:0.375rem;">';
+    for (const a of alerts) {
+      html += `<div><sup style="color:#d00;">${a.num}</sup> ${fmtBid(a.bid)}: ${a.meaning}</div>`;
+    }
+    html += '</div>';
+  }
+  document.getElementById('bba-section').innerHTML = html;
+}
+
+function fmtBid(bid) {
+  if (!bid) return '';
+  return bid.replace(/S$/, '\u2660').replace(/H$/, '<span style="color:#d00">\u2665</span>')
+    .replace(/D$/, '<span style="color:#d00">\u2666</span>').replace(/C$/, '\u2663');
 }
 
 // ==================== Helpers ====================
@@ -472,7 +642,9 @@ function showError(msg) { const el = document.getElementById('error'); el.textCo
 function hideAll() {
   document.getElementById('player-results').classList.add('hidden');
   document.getElementById('board-results').classList.add('hidden');
-  const v = document.getElementById('board-viewer'); v.src = ''; v.classList.add('hidden');
+  document.getElementById('viewer-row').classList.add('hidden');
+  document.getElementById('board-viewer').src = '';
+  currentBoardData = null;
 }
 </script>
 </body>
