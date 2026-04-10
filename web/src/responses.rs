@@ -17,10 +17,13 @@ pub struct HealthResponse {
 #[derive(Serialize)]
 pub struct UploadResponse {
     pub session_id: String,
+    pub event_name: Option<String>,
+    pub event_date: Option<String>,
     pub players: Vec<String>,
     pub boards: Vec<u32>,
     pub board_count: usize,
     pub result_count: usize,
+    pub has_pbn: bool,
 }
 
 #[derive(Serialize)]
@@ -38,6 +41,8 @@ pub struct BoardListResponse {
 #[derive(Serialize)]
 pub struct PlayerAnalysisResponse {
     pub player_name: String,
+    pub partners: Vec<String>,
+    pub seats: Vec<String>,
     pub boards_played: u32,
     pub boards_declared: u32,
     pub avg_matchpoint_pct: f64,
@@ -165,8 +170,39 @@ impl From<&PlayerBoardResult> for PlayerBoardResultResponse {
 
 impl From<&PlayerAnalysis> for PlayerAnalysisResponse {
     fn from(a: &PlayerAnalysis) -> Self {
+        // Collect unique partners
+        let mut partners: Vec<String> = a
+            .board_results
+            .iter()
+            .map(|r| r.partner.display_name())
+            .collect();
+        partners.sort();
+        partners.dedup();
+
+        // Collect unique seats
+        let mut seats: Vec<String> = a
+            .board_results
+            .iter()
+            .filter_map(|r| r.seat.map(|s| seat_str(s).to_string()))
+            .collect();
+        seats.sort();
+        seats.dedup();
+        if seats.is_empty() {
+            // Fallback to direction
+            let mut dirs: Vec<String> = a
+                .board_results
+                .iter()
+                .map(|r| direction_str(r.direction).to_string())
+                .collect();
+            dirs.sort();
+            dirs.dedup();
+            seats = dirs;
+        }
+
         Self {
             player_name: a.player_name.clone(),
+            partners,
+            seats,
             boards_played: a.boards_played,
             boards_declared: a.boards_declared,
             avg_matchpoint_pct: a.avg_matchpoint_pct,

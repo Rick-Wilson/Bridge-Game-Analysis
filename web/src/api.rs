@@ -154,12 +154,33 @@ pub async fn upload_files(
         duration,
     );
 
+    // Parse event date to a cleaner format if possible
+    let event_date = game_data.event_date.as_ref().map(|d| {
+        // BWS dates often look like "03/30/26 00:00:00" — extract just the date part
+        let date_part = d.split(' ').next().unwrap_or(d);
+        // Try to parse MM/DD/YY and reformat
+        let parts: Vec<&str> = date_part.split('/').collect();
+        if parts.len() == 3 {
+            let year = if parts[2].len() == 2 {
+                format!("20{}", parts[2])
+            } else {
+                parts[2].to_string()
+            };
+            format!("{}-{}-{}", year, parts[0], parts[1])
+        } else {
+            date_part.to_string()
+        }
+    });
+
     Ok(Json(UploadResponse {
         session_id,
+        event_name: game_data.event_name,
+        event_date,
         players,
         board_count: boards.len(),
         boards,
         result_count,
+        has_pbn: pbn_path.is_some(),
     }))
 }
 

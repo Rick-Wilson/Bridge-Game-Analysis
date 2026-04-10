@@ -32,6 +32,20 @@ pub fn load_game_data(
 fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
     let mut game_data = GameData::new();
 
+    // Extract event info from Session table
+    if let Some(session) = bws_data.sessions.first() {
+        game_data.event_name = session
+            .name
+            .as_ref()
+            .map(|n| n.trim().to_string())
+            .filter(|n| !n.is_empty());
+        game_data.event_date = session
+            .date
+            .as_ref()
+            .map(|d| d.trim().to_string())
+            .filter(|d| !d.is_empty());
+    }
+
     // Build board data from PBN (has par contract info)
     for board in &pbn_boards {
         if let Some(num) = board.number {

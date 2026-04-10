@@ -365,6 +365,10 @@ impl BoardResult {
 /// Complete merged data for a game session
 #[derive(Debug)]
 pub struct GameData {
+    /// Event/session name (e.g., "Monday Morning Pairs")
+    pub event_name: Option<String>,
+    /// Event date string
+    pub event_date: Option<String>,
     /// Board information keyed by board number
     pub boards: HashMap<u32, BoardData>,
     /// Player registry
@@ -377,6 +381,8 @@ impl GameData {
     /// Create empty game data
     pub fn new() -> Self {
         Self {
+            event_name: None,
+            event_date: None,
             boards: HashMap::new(),
             players: PlayerRegistry::new(),
             results: Vec::new(),
