@@ -216,10 +216,23 @@ tr:hover td { background: #f1f5f9; }
 }
 
 .mp-fill {
+  display: block;
   height: 100%;
   border-radius: 3px;
   transition: width 0.3s;
 }
+
+/* Contract result coloring */
+.contract-made { color: var(--good); font-weight: 500; }
+.contract-down { color: var(--play); font-weight: 500; }
+
+/* MP% coloring */
+.mp-good { color: var(--good); font-weight: 500; }
+.mp-bad { color: var(--play); font-weight: 500; }
+
+/* Suit symbols */
+.suit-red { color: #dc2626; }
+.suit-black { color: #212529; }
 
 /* Loading / empty states */
 .loading { text-align: center; padding: 3rem; color: var(--text-muted); }
@@ -424,10 +437,10 @@ function renderPlayerAnalysis(data) {
   document.getElementById('player-tbody').innerHTML = data.board_results.map(r => `<tr>
     <td>${r.board_number}</td>
     <td>${r.direction}</td>
-    <td>${r.result_str || 'Pass'}</td>
+    <td>${fmtContract(r.result_str)}</td>
     <td class="text-right">${r.player_score}</td>
-    <td class="text-right">${r.matchpoint_pct.toFixed(1)}% ${mpBar(r.matchpoint_pct)}</td>
-    <td>${r.matched_field_contract ? '=' : ''}${r.field_contract || ''}</td>
+    <td class="text-right">${fmtMp(r.matchpoint_pct)}</td>
+    <td>${fmtField(r.field_contract, r.matched_field_contract)}</td>
     <td><span class="cause cause-${r.cause}">${r.cause}</span></td>
     <td style="white-space:normal;max-width:200px;">${r.notes}</td>
   </tr>`).join('');
@@ -441,8 +454,8 @@ function renderBoardAnalysis(data) {
 
   document.getElementById('board-summary').innerHTML = `
     <div class="stat"><div class="stat-value">Board ${data.board_number}</div><div class="stat-label">Board</div></div>
-    <div class="stat"><div class="stat-value">${data.field_contract || '-'}</div><div class="stat-label">Field Contract</div></div>
-    <div class="stat"><div class="stat-value">${data.board_type}</div><div class="stat-label">Board Type</div></div>
+    <div class="stat"><div class="stat-value">${suitify(data.field_contract || '-')}</div><div class="stat-label">Field Contract</div></div>
+    <div class="stat"><div class="stat-value">${suitify(data.board_type)}</div><div class="stat-label">Board Type</div></div>
     <div class="stat"><div class="stat-value">${data.results.length}</div><div class="stat-label">Tables</div></div>
   `;
 
@@ -456,20 +469,47 @@ function renderBoardAnalysis(data) {
   document.getElementById('board-tbody').innerHTML = data.results.map(r => `<tr>
     <td>${r.ns_pair}</td>
     <td>${r.ew_pair}</td>
-    <td>${r.result_str || 'Pass'}</td>
+    <td>${fmtContract(r.result_str)}</td>
     <td class="text-right">${r.ns_score}</td>
-    <td class="text-right">${r.ns_analysis.matchpoint_pct.toFixed(1)}% ${mpBar(r.ns_analysis.matchpoint_pct)}</td>
+    <td class="text-right">${fmtMp(r.ns_analysis.matchpoint_pct)}</td>
     <td><span class="cause cause-${r.ns_analysis.cause}">${r.ns_analysis.cause}</span> ${r.ns_analysis.notes}</td>
-    <td class="text-right">${r.ew_analysis.matchpoint_pct.toFixed(1)}% ${mpBar(r.ew_analysis.matchpoint_pct)}</td>
+    <td class="text-right">${fmtMp(r.ew_analysis.matchpoint_pct)}</td>
     <td><span class="cause cause-${r.ew_analysis.cause}">${r.ew_analysis.cause}</span> ${r.ew_analysis.notes}</td>
   </tr>`).join('');
 }
 
 // ==================== Helpers ====================
 
-function mpBar(pct) {
-  const color = pct >= 60 ? 'var(--good)' : pct >= 40 ? '#eab308' : 'var(--play)';
-  return `<span class="mp-bar"><span class="mp-fill" style="width:${pct}%;background:${color}"></span></span>`;
+/** Replace strain letters with colored suit symbols */
+function suitify(str) {
+  if (!str) return '';
+  return str
+    .replace(/NT/g, 'NT')
+    .replace(/S/g, '<span class="suit-black">\u2660</span>')
+    .replace(/H/g, '<span class="suit-red">\u2665</span>')
+    .replace(/D/g, '<span class="suit-red">\u2666</span>')
+    .replace(/C/g, '<span class="suit-black">\u2663</span>');
+}
+
+/** Format a contract result string with suit symbols and making/down color */
+function fmtContract(str) {
+  if (!str || str === 'Pass') return str || '';
+  const colored = suitify(str);
+  if (str.includes('-')) return `<span class="contract-down">${colored}</span>`;
+  return `<span class="contract-made">${colored}</span>`;
+}
+
+/** Format a field contract with suit symbols */
+function fmtField(str, matched) {
+  if (!str) return '';
+  return (matched ? '=' : '') + suitify(str);
+}
+
+/** Format MP% with color and bar */
+function fmtMp(pct) {
+  const cls = pct >= 50 ? 'mp-good' : 'mp-bad';
+  const barColor = pct >= 60 ? 'var(--good)' : pct >= 40 ? '#eab308' : 'var(--play)';
+  return `<span class="${cls}">${pct.toFixed(1)}%</span> <span class="mp-bar"><span class="mp-fill" style="width:${pct}%;background:${barColor}"></span></span>`;
 }
 
 function populateSelect(id, items, placeholder) {
