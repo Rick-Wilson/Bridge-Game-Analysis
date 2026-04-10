@@ -97,6 +97,7 @@ tr.clickable-row:hover td { background: #e0e7ff; }
 .side-panel th, .side-panel td { padding: 3px 5px; border: 1px solid var(--border); text-align: center; }
 .side-panel th { background: var(--bg); }
 .dd-highlight-green { background: #d4edda !important; color: #155724 !important; font-weight: 700; }
+.dd-highlight-red { background: #f8d7da !important; color: #721c24 !important; font-weight: 700; }
 .bba-loading { color: var(--text-muted); font-size: 0.75rem; text-align: center; padding: 0.5rem; }
 
 .hand-viewer-frame { width: 100%; height: 500px; border: 1px solid var(--border); border-radius: var(--radius); }
@@ -402,9 +403,12 @@ function navBoard(delta) {
 let currentBoardData = null;
 let activeRowIdx = 0;
 let cachedDDTricks = null; // Store DD data for re-rendering on row change
+let cachedBBAContract = null; // {seat, suitIdx} from BBA auction, or null
+let cachedBBAContract = null; // {seat, strain} from BBA auction, or null
 
 function renderBoard(data) {
   currentBoardData = data;
+  cachedBBAContract = null;
   document.getElementById('board-results').classList.remove('hidden');
 
   // Determine initial row: player's row if navigating from player view, else first
@@ -521,20 +525,24 @@ function parseDDTrick(ch) {
 }
 
 function renderDDTable(ddtricks, activeResult) {
-  // Parse the active contract to determine which cell to highlight
-  let hlSeat = null, hlSuitIdx = null;
+  // Parse the active (user) contract
+  let userSeat = null, userSuitIdx = null;
   if (activeResult && activeResult.result_str) {
     const m = activeResult.result_str.match(/^\d(NT|[SHDC])([NESW])/);
     if (m) {
-      hlSeat = m[2]; // declarer seat
+      userSeat = m[2];
       const strainMap = {C:0, D:1, H:2, S:3, NT:4};
-      hlSuitIdx = strainMap[m[1]] ?? null;
+      userSuitIdx = strainMap[m[1]] ?? null;
     }
   }
 
+  // BBA contract (may be null if unavailable)
+  const bba = cachedBBAContract;
+  const hasBBA = bba !== null;
+  const agree = hasBBA && bba.seat === userSeat && bba.suitIdx === userSuitIdx;
+
   const seats = ['N','S','E','W'];
-  // DD tricks order: NT, S, H, D, C per seat — display as C, D, H, S, NT
-  const ddOrder = [4, 3, 2, 1, 0]; // map display col to ddtricks offset
+  const ddOrder = [4, 3, 2, 1, 0]; // DD order NT,S,H,D,C -> display C,D,H,S,NT
   const suitHdrs = [
     '<span style="color:#000">\u2663</span>',
     '<span style="color:#d00">\u2666</span>',
@@ -550,9 +558,19 @@ function renderDDTable(ddtricks, activeResult) {
     html += `<tr><td style="font-weight:700;background:var(--bg);">${seats[i]}</td>`;
     for (let j = 0; j < 5; j++) {
       const tricks = parseDDTrick(ddtricks[i * 5 + ddOrder[j]]);
-      const isHighlight = (seats[i] === hlSeat && j === hlSuitIdx);
-      const cls = isHighlight ? ' class="dd-highlight-green"' : '';
-      html += `<td${cls}>${tricks}</td>`;
+      const isUser = (seats[i] === userSeat && j === userSuitIdx);
+      const isBBA = hasBBA && (seats[i] === bba.seat && j === bba.suitIdx);
+      let cls = '';
+      if (isUser && isBBA) {
+        cls = 'dd-highlight-green'; // both agree
+      } else if (isUser && !hasBBA) {
+        cls = 'dd-highlight-green'; // no BBA, show user in green
+      } else if (isUser && hasBBA && !agree) {
+        cls = 'dd-highlight-red'; // user differs from BBA
+      } else if (isBBA && !agree) {
+        cls = 'dd-highlight-green'; // BBA's recommendation
+      }
+      html += `<td${cls ? ` class="${cls}"` : ''}>${tricks}</td>`;
     }
     html += '</tr>';
   }
@@ -562,6 +580,7 @@ function renderDDTable(ddtricks, activeResult) {
 
 // ==================== BBA Auction ====================
 async function fetchBBA(dealInfo) {
+  cachedBBAContract = null;
   const bbaEl = document.getElementById('bba-section');
   bbaEl.innerHTML = '<div class="bba-loading">Loading BBA auction...</div>';
   try {
@@ -574,12 +593,60 @@ async function fetchBBA(dealInfo) {
     const result = await res.json();
     if (result.success) {
       renderBBAAuction(result, dealInfo.dealer);
+      // Parse BBA's final contract for DD highlighting
+      cachedBBAContract = parseBBAContract(result.auctionEncoded, dealInfo.dealer);
+      // Re-render DD table with BBA contract info
+      if (cachedDDTricks && currentBoardData) {
+        renderDDTable(cachedDDTricks, currentBoardData.results[activeRowIdx]);
+      }
     } else {
       bbaEl.innerHTML = '<div class="bba-loading">BBA unavailable</div>';
     }
   } catch (e) {
     bbaEl.innerHTML = '<div class="bba-loading">BBA unavailable</div>';
   }
+}
+
+/** Parse BBA's encoded auction to find the final contract's declarer and strain.
+ *  Encoded format: 2-char bids, "--" = pass, "Db" = double, "Rd" = redouble.
+ *  Returns {seat, suitIdx} or null. */
+function parseBBAContract(encoded, dealer) {
+  if (!encoded || !dealer) return null;
+  const calls = [];
+  for (let i = 0; i < encoded.length; i += 2) calls.push(encoded.substring(i, i + 2));
+
+  const strainMap = {C:0, D:1, H:2, S:3, N:4};
+  const seatOrder = ['N','E','S','W'];
+  const dealerIdx = seatOrder.indexOf(dealer);
+
+  let lastBidIdx = -1, lastBid = null;
+  for (let i = calls.length - 1; i >= 0; i--) {
+    if (calls[i] !== '--' && calls[i] !== 'Db' && calls[i] !== 'Rd') {
+      lastBidIdx = i; lastBid = calls[i]; break;
+    }
+  }
+  if (!lastBid) return null;
+
+  const strain = lastBid[1] === 'N' ? 'N' : lastBid[1]; // N for NT
+  const bidderIdx = (dealerIdx + lastBidIdx) % 4;
+  const isNS = bidderIdx % 2 === 0; // N=0, S=2 are even
+
+  // Find first bid in same strain by same side = declarer
+  let declarer = seatOrder[bidderIdx];
+  for (let i = 0; i <= lastBidIdx; i++) {
+    const c = calls[i];
+    if (c !== '--' && c !== 'Db' && c !== 'Rd') {
+      const cStrain = c[1] === 'N' ? 'N' : c[1];
+      if (cStrain === strain) {
+        const callerIdx = (dealerIdx + i) % 4;
+        const callerIsNS = callerIdx % 2 === 0;
+        if (callerIsNS === isNS) { declarer = seatOrder[callerIdx]; break; }
+      }
+    }
+  }
+
+  const suitIdx = strainMap[strain] ?? null;
+  return suitIdx !== null ? { seat: declarer, suitIdx } : null;
 }
 
 function renderBBAAuction(result, dealer) {
