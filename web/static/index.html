@@ -77,7 +77,14 @@ tr:hover td { background: #f1f5f9; }
 .clickable:hover { text-decoration: underline; }
 td a { color: var(--primary); text-decoration: none; font-weight: 500; cursor: pointer; }
 td a:hover { text-decoration: underline; }
-.declarer { font-weight: 700; }
+.declarer-name { font-weight: 700; }
+.row-highlight td { background: #eff6ff !important; }
+
+/* Compact board table columns */
+th, td { font-size: 0.8rem; }
+.col-contract { width: 5.5rem; }
+.col-score { width: 4.5rem; }
+.col-mp { width: 6.5rem; }
 
 .hand-viewer-frame { width: 100%; height: 500px; border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 1rem; }
 
@@ -174,6 +181,7 @@ let sessionId = null;
 let cachedPlayers = [];
 let cachedBoards = [];
 let currentBoard = null;
+let currentPlayerName = null; // Track for row highlighting in board view
 
 // ==================== Upload ====================
 const fileInput = document.getElementById('file-input');
@@ -272,6 +280,7 @@ function showBoardGrid() {
 async function selectPlayer(btn, name) {
   document.querySelectorAll('.name-grid button').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
+  currentPlayerName = name;
   showLoading(true); hideAll(); showError('');
   try {
     const res = await fetch(`${BASE}/api/player?session=${sessionId}&name=${encodeURIComponent(name)}`);
@@ -332,10 +341,11 @@ function goToPlayer(name) {
 }
 
 // ==================== Board ====================
-async function selectBoard(btn, num) {
+async function selectBoard(btn, num, keepPlayer) {
   document.querySelectorAll('.board-grid button:not(.nav-arrow)').forEach(b => b.classList.remove('active'));
   if (btn) btn.classList.add('active');
   currentBoard = num;
+  if (!keepPlayer) currentPlayerName = null;
   showLoading(true); hideAll(); showError('');
   try {
     const res = await fetch(`${BASE}/api/board?session=${sessionId}&num=${num}`);
@@ -346,18 +356,17 @@ async function selectBoard(btn, num) {
 }
 
 function goToBoard(num) {
-  // Switch to board view and load that board
+  // Switch to board view and load that board, keeping current player for highlighting
   document.getElementById('tab-players').classList.remove('active');
   document.getElementById('tab-boards').classList.add('active');
   document.getElementById('player-grid').classList.add('hidden');
   hideAll();
   showBoardGrid();
   currentBoard = num;
-  // Highlight the button
   document.querySelectorAll('.board-grid button:not(.nav-arrow)').forEach(b => {
     b.classList.toggle('active', parseInt(b.textContent) === num);
   });
-  selectBoard(null, num);
+  selectBoard(null, num, true); // keepPlayer=true to highlight their row
 }
 
 function navBoard(delta) {
@@ -386,27 +395,30 @@ function renderBoard(data) {
   `;
 
   document.getElementById('board-thead').innerHTML = `<tr>
-    <th>NS Pair</th><th>EW Pair</th><th>Contract</th>
-    <th class="text-right">NS Score</th>
-    <th class="text-right">NS MP%</th><th>NS Cause</th>
-    <th class="text-right">EW MP%</th><th>EW Cause</th>
+    <th>NS Pair</th><th>EW Pair</th><th class="col-contract">Contract</th>
+    <th class="text-right col-score">Score</th>
+    <th class="text-right col-mp">NS MP%</th><th>NS Cause</th>
+    <th class="text-right col-mp">EW MP%</th><th>EW Cause</th>
   </tr>`;
 
-  document.getElementById('board-tbody').innerHTML = data.results.map((r, idx) => {
-    // Highlight declarer pair: if declarer is N or S, bold NS; if E or W, bold EW
-    const declNS = r.declarer_direction === 'N' || r.declarer_direction === 'S';
-    const nsCls = declNS ? 'declarer' : '';
-    const ewCls = !declNS ? 'declarer' : '';
-    // Use full player names for clickable lookup, display abbreviated pair name
-    const nsP1 = `<a href="javascript:void(0)" onclick="goToPlayer('${esc(r.ns_player1)}')">${abbrev(r.ns_player1)}</a>`;
-    const nsP2 = `<a href="javascript:void(0)" onclick="goToPlayer('${esc(r.ns_player2)}')">${abbrev(r.ns_player2)}</a>`;
-    const ewP1 = `<a href="javascript:void(0)" onclick="goToPlayer('${esc(r.ew_player1)}')">${abbrev(r.ew_player1)}</a>`;
-    const ewP2 = `<a href="javascript:void(0)" onclick="goToPlayer('${esc(r.ew_player2)}')">${abbrev(r.ew_player2)}</a>`;
-    // Highlight the first row (the one shown in the hand viewer)
-    const rowCls = idx === 0 && data.bbo_url ? 'style="background:#eff6ff;"' : '';
+  document.getElementById('board-tbody').innerHTML = data.results.map(r => {
+    const dn = r.declarer_name;
+    // Bold the declarer's name, make all names clickable with full names for lookup
+    const fmtP = (fullName, isDeclarer) => {
+      const cls = isDeclarer ? 'declarer-name' : '';
+      return `<a href="javascript:void(0)" class="${cls}" onclick="goToPlayer('${esc(fullName)}')">${abbrev(fullName)}</a>`;
+    };
+    const nsP1 = fmtP(r.ns_player1, r.ns_player1 === dn);
+    const nsP2 = fmtP(r.ns_player2, r.ns_player2 === dn);
+    const ewP1 = fmtP(r.ew_player1, r.ew_player1 === dn);
+    const ewP2 = fmtP(r.ew_player2, r.ew_player2 === dn);
+    // Highlight row if current player is in this result
+    const allNames = [r.ns_player1, r.ns_player2, r.ew_player1, r.ew_player2];
+    const isPlayerRow = currentPlayerName && allNames.includes(currentPlayerName);
+    const rowCls = isPlayerRow ? 'class="row-highlight"' : '';
     return `<tr ${rowCls}>
-    <td class="${nsCls}">${nsP1} - ${nsP2}</td>
-    <td class="${ewCls}">${ewP1} - ${ewP2}</td>
+    <td>${nsP1} - ${nsP2}</td>
+    <td>${ewP1} - ${ewP2}</td>
     <td>${fmtContract(r.result_str)}</td>
     <td class="text-right">${r.ns_score}</td>
     <td class="text-right">${fmtMp(r.ns_analysis.matchpoint_pct)}</td>

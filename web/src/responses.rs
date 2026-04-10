@@ -97,6 +97,7 @@ pub struct BoardTableResultResponse {
     pub ew_player2: String,
     pub contract: Option<String>,
     pub declarer_direction: String,
+    pub declarer_name: String,
     pub result_str: String,
     pub ns_score: i32,
     pub ns_analysis: DirectionAnalysisResponse,
@@ -237,15 +238,29 @@ impl From<&DirectionAnalysis> for DirectionAnalysisResponse {
 
 impl From<&BoardTableResult> for BoardTableResultResponse {
     fn from(r: &BoardTableResult) -> Self {
+        // first_player() = N for NS, W for EW; second_player() = S for NS, E for EW
+        let ns_p1_name = r.ns_pair.first_player().display_name(); // North
+        let ns_p2_name = r.ns_pair.second_player().display_name(); // South
+        let ew_p1_name = r.ew_pair.first_player().display_name(); // West
+        let ew_p2_name = r.ew_pair.second_player().display_name(); // East
+
+        let declarer_name = match r.declarer_direction {
+            bridge_club_analysis::Direction::North => ns_p1_name.clone(),
+            bridge_club_analysis::Direction::South => ns_p2_name.clone(),
+            bridge_club_analysis::Direction::West => ew_p1_name.clone(),
+            bridge_club_analysis::Direction::East => ew_p2_name.clone(),
+        };
+
         Self {
             ns_pair: r.ns_pair.display_name(),
             ew_pair: r.ew_pair.display_name(),
-            ns_player1: r.ns_pair.player1.display_name(),
-            ns_player2: r.ns_pair.player2.display_name(),
-            ew_player1: r.ew_pair.player1.display_name(),
-            ew_player2: r.ew_pair.player2.display_name(),
+            ns_player1: ns_p1_name,
+            ns_player2: ns_p2_name,
+            ew_player1: ew_p1_name,
+            ew_player2: ew_p2_name,
             contract: r.contract.as_ref().map(|c| c.display()),
             declarer_direction: seat_str(r.declarer_direction).to_string(),
+            declarer_name,
             result_str: r.result_str.clone(),
             ns_score: r.ns_score,
             ns_analysis: (&r.ns_analysis).into(),
