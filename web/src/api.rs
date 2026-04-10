@@ -39,10 +39,12 @@ pub async fn index_page(State(state): State<Arc<AppState>>) -> Html<String> {
 }
 
 /// Upload BWS and optional PBN files. Returns session ID + player/board lists.
+/// If `add_to` query param is set, adds files to an existing session instead.
 pub async fn upload_files(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    Query(params): Query<HashMap<String, String>>,
     mut multipart: Multipart,
 ) -> Result<Json<UploadResponse>, (StatusCode, String)> {
     let start = Instant::now();
@@ -50,7 +52,12 @@ pub async fn upload_files(
     let anon_ip = analytics::anonymize_ip(&raw_ip);
     let (browser, device) = analytics::extract_user_agent_info(&headers);
 
-    let session_id = uuid::Uuid::new_v4().to_string();
+    // Use existing session or create new one
+    let session_id = if let Some(existing) = params.get("add_to") {
+        existing.clone()
+    } else {
+        uuid::Uuid::new_v4().to_string()
+    };
     let session_dir = state.upload_dir.join(&session_id);
     std::fs::create_dir_all(&session_dir).map_err(|e| {
         (
@@ -59,11 +66,8 @@ pub async fn upload_files(
         )
     })?;
 
-    let mut bws_path = None;
-    let mut pbn_path = None;
-
+    // Save uploaded files to session directory
     while let Ok(Some(field)) = multipart.next_field().await {
-        let name = field.name().unwrap_or("").to_string();
         let file_name = field.file_name().unwrap_or("upload").to_string();
         let data = field.bytes().await.map_err(|e| {
             (
@@ -72,7 +76,6 @@ pub async fn upload_files(
             )
         })?;
 
-        let ext = file_name.rsplit('.').next().unwrap_or("").to_lowercase();
         let dest = session_dir.join(&file_name);
         std::fs::write(&dest, &data).map_err(|e| {
             (
@@ -80,11 +83,24 @@ pub async fn upload_files(
                 format!("Failed to write file: {}", e),
             )
         })?;
+    }
 
-        match (name.as_str(), ext.as_str()) {
-            ("bws", _) | (_, "bws") => bws_path = Some(dest),
-            ("pbn", _) | (_, "pbn") => pbn_path = Some(dest),
-            _ => {}
+    // Find BWS and PBN files in session directory
+    let mut bws_path = None;
+    let mut pbn_path = None;
+    if let Ok(entries) = std::fs::read_dir(&session_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            match ext.as_str() {
+                "bws" => bws_path = Some(path),
+                "pbn" => pbn_path = Some(path),
+                _ => {}
+            }
         }
     }
 
