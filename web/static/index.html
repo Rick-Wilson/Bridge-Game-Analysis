@@ -392,6 +392,7 @@ async function doUpload(files) {
     populateSelect('board-select', data.boards.map(String), 'Select board...');
 
     uploadArea.classList.add('hidden');
+    document.getElementById('download-help').classList.add('hidden');
     document.getElementById('controls').classList.remove('hidden');
 
     // Show PBN notice if no PBN was included
@@ -442,6 +443,7 @@ document.getElementById('new-file-btn').addEventListener('click', () => {
   fileInput.value = '';
   fileNames.textContent = '';
   uploadArea.classList.remove('hidden');
+  document.getElementById('download-help').classList.remove('hidden');
   document.getElementById('controls').classList.add('hidden');
   document.getElementById('pbn-notice').classList.add('hidden');
   hideResults();
