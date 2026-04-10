@@ -90,6 +90,11 @@ pub struct BoardAnalysisResponse {
 pub struct BoardTableResultResponse {
     pub ns_pair: String,
     pub ew_pair: String,
+    /// Individual player full names for clickable lookup
+    pub ns_player1: String,
+    pub ns_player2: String,
+    pub ew_player1: String,
+    pub ew_player2: String,
     pub contract: Option<String>,
     pub declarer_direction: String,
     pub result_str: String,
@@ -235,6 +240,10 @@ impl From<&BoardTableResult> for BoardTableResultResponse {
         Self {
             ns_pair: r.ns_pair.display_name(),
             ew_pair: r.ew_pair.display_name(),
+            ns_player1: r.ns_pair.player1.display_name(),
+            ns_player2: r.ns_pair.player2.display_name(),
+            ew_player1: r.ew_pair.player1.display_name(),
+            ew_player2: r.ew_pair.player2.display_name(),
             contract: r.contract.as_ref().map(|c| c.display()),
             declarer_direction: seat_str(r.declarer_direction).to_string(),
             result_str: r.result_str.clone(),

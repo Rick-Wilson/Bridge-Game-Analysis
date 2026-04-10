@@ -392,21 +392,21 @@ function renderBoard(data) {
     <th class="text-right">EW MP%</th><th>EW Cause</th>
   </tr>`;
 
-  document.getElementById('board-tbody').innerHTML = data.results.map(r => {
-    // Highlight declarer: if declarer is N or S, bold NS pair; if E or W, bold EW pair
+  document.getElementById('board-tbody').innerHTML = data.results.map((r, idx) => {
+    // Highlight declarer pair: if declarer is N or S, bold NS; if E or W, bold EW
     const declNS = r.declarer_direction === 'N' || r.declarer_direction === 'S';
     const nsCls = declNS ? 'declarer' : '';
     const ewCls = !declNS ? 'declarer' : '';
-    // Make player names clickable
-    const nsNames = r.ns_pair.split(' & ').map(n =>
-      `<a href="javascript:void(0)" onclick="goToPlayer('${esc(n.trim())}')">${n.trim()}</a>`
-    ).join(' &amp; ');
-    const ewNames = r.ew_pair.split(' & ').map(n =>
-      `<a href="javascript:void(0)" onclick="goToPlayer('${esc(n.trim())}')">${n.trim()}</a>`
-    ).join(' &amp; ');
-    return `<tr>
-    <td class="${nsCls}">${nsNames}</td>
-    <td class="${ewCls}">${ewNames}</td>
+    // Use full player names for clickable lookup, display abbreviated pair name
+    const nsP1 = `<a href="javascript:void(0)" onclick="goToPlayer('${esc(r.ns_player1)}')">${abbrev(r.ns_player1)}</a>`;
+    const nsP2 = `<a href="javascript:void(0)" onclick="goToPlayer('${esc(r.ns_player2)}')">${abbrev(r.ns_player2)}</a>`;
+    const ewP1 = `<a href="javascript:void(0)" onclick="goToPlayer('${esc(r.ew_player1)}')">${abbrev(r.ew_player1)}</a>`;
+    const ewP2 = `<a href="javascript:void(0)" onclick="goToPlayer('${esc(r.ew_player2)}')">${abbrev(r.ew_player2)}</a>`;
+    // Highlight the first row (the one shown in the hand viewer)
+    const rowCls = idx === 0 && data.bbo_url ? 'style="background:#eff6ff;"' : '';
+    return `<tr ${rowCls}>
+    <td class="${nsCls}">${nsP1} - ${nsP2}</td>
+    <td class="${ewCls}">${ewP1} - ${ewP2}</td>
     <td>${fmtContract(r.result_str)}</td>
     <td class="text-right">${r.ns_score}</td>
     <td class="text-right">${fmtMp(r.ns_analysis.matchpoint_pct)}</td>
@@ -448,6 +448,13 @@ function fmtMp(pct) {
   return `<span class="${cls}">${pct.toFixed(1)}%</span> <span class="mp-bar"><span class="mp-fill" style="width:${pct}%;background:${bar}"></span></span>`;
 }
 function esc(s) { return s.replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+/** Abbreviate a name for table display: "David Bailey" -> "David B." */
+function abbrev(name) {
+  if (!name) return '';
+  const parts = name.split(' ');
+  if (parts.length <= 1) return name;
+  return parts[0] + ' ' + parts.slice(1).map(p => p[0] + '.').join('');
+}
 function showLoading(show) { document.getElementById('loading').classList.toggle('hidden', !show); }
 function showError(msg) { const el = document.getElementById('error'); el.textContent = msg; el.classList.toggle('hidden', !msg); }
 function hideAll() {
