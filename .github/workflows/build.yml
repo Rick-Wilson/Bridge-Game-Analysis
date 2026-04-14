@@ -13,16 +13,8 @@ jobs:
   build-linux-x64:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout Bridge-Club-Game-Analysis
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          path: Bridge-Club-Game-Analysis
-
-      - name: Checkout Bridge-Parsers
-        uses: actions/checkout@v4
-        with:
-          repository: Rick-Wilson/Bridge-Parsers
-          path: Bridge-Parsers
 
       - name: Install mdbtools
         run: sudo apt-get update && sudo apt-get install -y mdbtools
@@ -31,27 +23,21 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
 
       - name: Build CLI
-        run: |
-          cd Bridge-Club-Game-Analysis
-          cargo build --release -p bridge-analysis
+        run: cargo build --release -p bridge-analysis
 
       - name: Build Web Server
-        run: |
-          cd Bridge-Club-Game-Analysis
-          cargo build --release -p bridge-analysis-web
+        run: cargo build --release -p bridge-analysis-web
 
       - name: Run tests
-        run: |
-          cd Bridge-Club-Game-Analysis
-          cargo test --all
+        run: cargo test --all
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: bridge-analysis-linux-x64
           path: |
-            Bridge-Club-Game-Analysis/target/release/bridge-analysis
-            Bridge-Club-Game-Analysis/target/release/bridge-analysis-web
+            target/release/bridge-analysis
+            target/release/bridge-analysis-web
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
