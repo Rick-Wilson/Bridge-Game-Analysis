@@ -209,6 +209,7 @@ dependencies = [
  "bridge-club-analysis",
  "chrono",
  "dotenvy",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2",
@@ -266,7 +267,7 @@ dependencies = [
 [[package]]
 name = "bridge-types"
 version = "0.1.0"
-source = "git+https://github.com/Rick-Wilson/bridge-types#f3017fd5b0fbda7f21b860be3333102797580541"
+source = "git+https://github.com/Rick-Wilson/bridge-types#a1272c0605d198df64b0cf0eae593a0d56ef1b37"
 
 [[package]]
 name = "bumpalo"

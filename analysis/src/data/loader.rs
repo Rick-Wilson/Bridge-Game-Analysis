@@ -174,7 +174,16 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
                 lead_card: received.lead_card.clone(),
             };
 
-            game_data.results.push(result);
+            // Deduplicate: skip if we already have this board + table + round
+            let is_dup = game_data.results.iter().any(|existing| {
+                existing.board_number == board_number
+                    && existing.section == received.section
+                    && existing.table == received.table
+                    && existing.round == received.round
+            });
+            if !is_dup {
+                game_data.results.push(result);
+            }
         }
     }
 
