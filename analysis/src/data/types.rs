@@ -375,6 +375,11 @@ pub struct GameData {
     pub players: PlayerRegistry,
     /// All board results
     pub results: Vec<BoardResult>,
+    /// Pair-number → (first_player, second_player) in display order.
+    /// Key is (section, pair_number). Populated from RoundData round 1.
+    /// Enables name-override lookup by pair number from pasted ACBL Live data.
+    pub pairs_by_number:
+        HashMap<(i32, i32), (crate::identity::PlayerId, crate::identity::PlayerId)>,
 }
 
 impl GameData {
@@ -386,6 +391,7 @@ impl GameData {
             boards: HashMap::new(),
             players: PlayerRegistry::new(),
             results: Vec::new(),
+            pairs_by_number: HashMap::new(),
         }
     }
 

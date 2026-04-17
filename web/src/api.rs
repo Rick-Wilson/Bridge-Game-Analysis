@@ -132,11 +132,41 @@ pub async fn upload_files(
     players.sort();
     players.dedup();
 
+    // Build maps of display name -> ACBL number and placeholder list
+    let mut player_acbl: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut missing_players: Vec<MissingPlayerInfo> = Vec::new();
+    for p in game_data.players.all_players() {
+        let display_name = p.display_name();
+        let acbl = p.id.acbl_number.clone();
+        if display_name.starts_with("Player ") {
+            missing_players.push(MissingPlayerInfo {
+                display_name,
+                acbl_number: acbl,
+            });
+        } else if let Some(acbl) = acbl {
+            player_acbl.insert(display_name, acbl);
+        }
+    }
+    missing_players.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+    missing_players.dedup_by(|a, b| a.display_name == b.display_name);
+
     // Count placeholder names (indicates the BWS had no ACBL name lookup)
-    let missing_names = players
-        .iter()
-        .filter(|name| name.starts_with("Player "))
-        .count();
+    let missing_names = missing_players.len();
+
+    // Build pair_num -> [acbl1, acbl2] map for the paste parser.
+    // Key is the pair number as a string (for JSON compatibility).
+    let mut pair_acbl: std::collections::HashMap<String, Vec<Option<String>>> =
+        std::collections::HashMap::new();
+    for ((_section, pair_num), (first_id, second_id)) in &game_data.pairs_by_number {
+        if *pair_num <= 0 {
+            continue;
+        }
+        pair_acbl.insert(
+            pair_num.to_string(),
+            vec![first_id.acbl_number.clone(), second_id.acbl_number.clone()],
+        );
+    }
 
     // Extract board list
     let mut boards: Vec<u32> = game_data.results.iter().map(|r| r.board_number).collect();
@@ -187,6 +217,9 @@ pub async fn upload_files(
         result_count,
         has_pbn: pbn_path.is_some(),
         missing_names,
+        player_acbl,
+        missing_players,
+        pair_acbl,
     }))
 }
 
@@ -396,6 +429,73 @@ pub async fn bba_proxy(body: axum::body::Bytes) -> Result<impl IntoResponse, (St
     ))
 }
 
+/// Update player name overrides for a session.
+///
+/// Body: JSON map of ACBL number -> name, e.g. {"2176661": "David Bailey", ...}.
+/// Merged into the session's names.json file, which is applied on every
+/// subsequent API request.
+pub async fn update_names(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+    Json(new_names): Json<HashMap<String, String>>,
+) -> Result<Json<UpdateNamesResponse>, (StatusCode, String)> {
+    let session_id = params.get("session").ok_or((
+        StatusCode::BAD_REQUEST,
+        "Missing 'session' parameter".to_string(),
+    ))?;
+
+    // Validate session ID (UUID format)
+    if session_id.len() != 36
+        || !session_id
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == '-')
+    {
+        return Err((StatusCode::BAD_REQUEST, "Invalid session ID".to_string()));
+    }
+
+    let session_dir = state.upload_dir.join(session_id);
+    if !session_dir.exists() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "Session not found or expired".to_string(),
+        ));
+    }
+
+    // Load existing names.json if present, then merge in the new names
+    let names_path = session_dir.join("names.json");
+    let mut existing: HashMap<String, String> = if names_path.exists() {
+        std::fs::read_to_string(&names_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+            .unwrap_or_default()
+    } else {
+        HashMap::new()
+    };
+
+    for (acbl, name) in new_names {
+        if !acbl.trim().is_empty() && !name.trim().is_empty() {
+            existing.insert(acbl.trim().to_string(), name.trim().to_string());
+        }
+    }
+
+    let json = serde_json::to_string_pretty(&existing).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to serialize names: {}", e),
+        )
+    })?;
+    std::fs::write(&names_path, json).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to write names.json: {}", e),
+        )
+    })?;
+
+    Ok(Json(UpdateNamesResponse {
+        total_names: existing.len(),
+    }))
+}
+
 // ==================== Admin ====================
 
 /// Admin dashboard page.
@@ -495,7 +595,22 @@ fn load_session_data(
         "BWS file not found in session".to_string(),
     ))?;
 
-    bridge_club_analysis::load_game_data(&bws_path, pbn_path.as_deref(), None).map_err(|e| {
+    // Load name overrides if a names.json exists in the session directory
+    let names_path = session_dir.join("names.json");
+    let name_overrides: Option<HashMap<String, String>> = if names_path.exists() {
+        std::fs::read_to_string(&names_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+    } else {
+        None
+    };
+
+    bridge_club_analysis::load_game_data_with_overrides(
+        &bws_path,
+        pbn_path.as_deref(),
+        name_overrides.as_ref(),
+    )
+    .map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Analysis error: {}", e),

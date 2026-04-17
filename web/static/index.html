@@ -155,9 +155,25 @@ tr.clickable-row:hover td { background: #e0e7ff; }
   </div>
 
   <div id="names-notice" class="pbn-notice hidden">
-    <strong>Warning:</strong> This BWS file does not include player names
-    (the club computer's ACBL name database wasn't loaded when the file was exported).
-    Players will appear as placeholders like "Player N-1".
+    <div><strong>Some player names are missing</strong> from this BWS file
+    (the club computer's ACBL name database wasn't loaded when the file was exported).</div>
+    <div id="names-missing-count" style="margin-top:0.375rem;font-size:0.8rem;color:var(--text-muted);"></div>
+    <div style="margin-top:0.5rem;">
+      <button class="btn btn-sm" id="paste-names-toggle">Paste pair names from ACBL Live</button>
+    </div>
+    <div id="paste-names-area" class="hidden" style="margin-top:0.75rem;">
+      <div style="font-size:0.8rem;margin-bottom:0.375rem;">
+        Go to your game on ACBL Live, select the <strong>Recaps</strong> table
+        showing pair numbers and names, and paste it below:
+      </div>
+      <textarea id="paste-names-text" rows="8"
+        style="width:100%;font-family:ui-monospace,monospace;font-size:0.75rem;padding:0.5rem;border:1px solid var(--border);border-radius:var(--radius);"
+        placeholder="1  Smith John - Jones Mary  A  ...&#10;2  Brown Bob - Davis Sue  B  ..."></textarea>
+      <div style="margin-top:0.5rem;">
+        <button class="btn btn-sm" id="paste-names-apply">Apply Names</button>
+        <span id="paste-names-result" style="margin-left:0.5rem;font-size:0.8rem;color:var(--text-muted);"></span>
+      </div>
+    </div>
   </div>
 
   <!-- Event header -->
@@ -273,20 +289,175 @@ async function doUpload(files, addTo) {
     const url = addTo ? `${BASE}/api/upload?add_to=${addTo}` : `${BASE}/api/upload`;
     const res = await fetch(url, { method: 'POST', body: formData });
     if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
+    let data = await res.json();
     sessionId = data.session_id;
+
+    // Merge any real names from this upload into localStorage
+    mergeNamesToStorage(data.player_acbl);
+
+    // If any placeholders can be resolved from localStorage, submit and refresh
+    data = await autoFillFromStorage(data);
+
     cachedPlayers = data.players;
     cachedBoards = data.boards;
+    lastUpload = data;
     document.getElementById('event-name').textContent = data.event_name || 'Game Results';
     document.getElementById('event-date').textContent = data.event_date || '';
     uploadArea.classList.add('hidden');
     document.getElementById('download-help').classList.add('hidden');
     document.getElementById('event-header').classList.remove('hidden');
     document.getElementById('pbn-notice').classList.toggle('hidden', hasPbn || data.has_pbn);
-    document.getElementById('names-notice').classList.toggle('hidden', !data.missing_names);
+    showNamesNotice(data);
     switchView('players');
   } catch (e) { showError(e.message); }
   finally { showLoading(false); }
+}
+
+// ==================== Name Storage / Overrides ====================
+const NAMES_KEY = 'bridge-analysis-names';
+let lastUpload = null; // most recent upload response, for name-override flow
+
+function getStoredNames() {
+  try { return JSON.parse(localStorage.getItem(NAMES_KEY) || '{}'); }
+  catch (e) { return {}; }
+}
+
+function saveStoredNames(dict) {
+  try { localStorage.setItem(NAMES_KEY, JSON.stringify(dict)); } catch (e) {}
+}
+
+function mergeNamesToStorage(playerAcbl) {
+  if (!playerAcbl) return;
+  const stored = getStoredNames();
+  let added = 0;
+  for (const [name, acbl] of Object.entries(playerAcbl)) {
+    if (acbl && !stored[acbl]) { stored[acbl] = name; added++; }
+    else if (acbl && stored[acbl] !== name) { stored[acbl] = name; added++; }
+  }
+  if (added > 0) saveStoredNames(stored);
+}
+
+/** If any missing_players have ACBL numbers we know from localStorage,
+ *  send them to the server and reload the session data. */
+async function autoFillFromStorage(data) {
+  if (!data.missing_players || data.missing_players.length === 0) return data;
+  const stored = getStoredNames();
+  const toApply = {};
+  for (const mp of data.missing_players) {
+    if (mp.acbl_number && stored[mp.acbl_number]) {
+      toApply[mp.acbl_number] = stored[mp.acbl_number];
+    }
+  }
+  if (Object.keys(toApply).length === 0) return data;
+  await fetch(`${BASE}/api/names?session=${sessionId}`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(toApply)
+  });
+  // Refetch upload-like info (we only need the updated player list + missing_players)
+  const refreshed = await fetch(`${BASE}/api/players?session=${sessionId}`).then(r => r.json());
+  // Rebuild a data object that looks like an upload response with updates
+  data.players = refreshed.players;
+  // Remove now-filled placeholders
+  data.missing_players = data.missing_players.filter(mp => !toApply[mp.acbl_number]);
+  data.missing_names = data.missing_players.length;
+  // Merge player_acbl entries for the newly named players
+  for (const [acbl, name] of Object.entries(toApply)) {
+    data.player_acbl[name] = acbl;
+  }
+  return data;
+}
+
+function showNamesNotice(data) {
+  const notice = document.getElementById('names-notice');
+  if (!data.missing_names) {
+    notice.classList.add('hidden');
+    return;
+  }
+  notice.classList.remove('hidden');
+  document.getElementById('names-missing-count').textContent =
+    `${data.missing_names} player${data.missing_names === 1 ? '' : 's'} still missing`;
+  // Hide the paste area until user clicks the button
+  document.getElementById('paste-names-area').classList.add('hidden');
+  document.getElementById('paste-names-text').value = '';
+  document.getElementById('paste-names-result').textContent = '';
+}
+
+// Toggle paste area
+document.getElementById('paste-names-toggle').addEventListener('click', () => {
+  document.getElementById('paste-names-area').classList.toggle('hidden');
+});
+
+// Parse pasted text → apply names
+document.getElementById('paste-names-apply').addEventListener('click', async () => {
+  const text = document.getElementById('paste-names-text').value;
+  const resultEl = document.getElementById('paste-names-result');
+  if (!text.trim()) { resultEl.textContent = 'Paste some text first'; return; }
+  if (!lastUpload) { resultEl.textContent = 'No upload loaded'; return; }
+
+  const pairs = parsePairText(text);
+  if (Object.keys(pairs).length === 0) {
+    resultEl.textContent = 'Couldn\'t find any pair lines in the pasted text';
+    return;
+  }
+
+  // Map pair_num -> [name1, name2] to ACBL# -> name using pair_acbl from upload
+  const overrides = {};
+  let matched = 0;
+  for (const [pairNum, names] of Object.entries(pairs)) {
+    const acblPair = lastUpload.pair_acbl[pairNum];
+    if (!acblPair) continue;
+    // acblPair is [first_acbl, second_acbl] in display order
+    if (acblPair[0] && names[0]) { overrides[acblPair[0]] = names[0]; matched++; }
+    if (acblPair[1] && names[1]) { overrides[acblPair[1]] = names[1]; matched++; }
+  }
+
+  if (matched === 0) {
+    resultEl.textContent = 'Pairs parsed but none matched this game\'s pair numbers';
+    return;
+  }
+
+  // Submit to server
+  const res = await fetch(`${BASE}/api/names?session=${sessionId}`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(overrides)
+  });
+  if (!res.ok) { resultEl.textContent = 'Server error: ' + await res.text(); return; }
+
+  // Save to localStorage
+  const stored = getStoredNames();
+  for (const [acbl, name] of Object.entries(overrides)) stored[acbl] = name;
+  saveStoredNames(stored);
+
+  // Refetch player list and update state
+  const updated = await fetch(`${BASE}/api/players?session=${sessionId}`).then(r => r.json());
+  cachedPlayers = updated.players;
+  // Remove now-filled placeholders from missing_players
+  lastUpload.missing_players = lastUpload.missing_players.filter(mp => !overrides[mp.acbl_number]);
+  lastUpload.missing_names = lastUpload.missing_players.length;
+  lastUpload.players = updated.players;
+  showNamesNotice(lastUpload);
+  showPlayerGrid();
+  resultEl.textContent = `Applied ${matched} name${matched === 1 ? '' : 's'}`;
+});
+
+/** Parse pasted ACBL Live pair list. Returns {pair_num: [name1, name2]}. */
+function parsePairText(text) {
+  const pairs = {};
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    // Expected format: "<pair_num> TAB <name1> - <name2> TAB ..."
+    // Tolerant match: starts with digits, then whitespace/tab, then names
+    // separated by " - ", up to whitespace + letter (strat A/B/C).
+    const m = line.match(/^\s*(\d+)\s+(.+?)\s+-\s+(.+?)(?:\s{2,}|\s+[A-Z](?:\s|$)|\t)/);
+    if (!m) continue;
+    const pairNum = m[1];
+    const name1 = m[2].trim();
+    const name2 = m[3].trim();
+    if (name1 && name2) pairs[pairNum] = [name1, name2];
+  }
+  return pairs;
 }
 
 document.getElementById('pbn-add-input').addEventListener('change', async (e) => {

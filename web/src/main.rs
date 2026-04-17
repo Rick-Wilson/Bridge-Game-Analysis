@@ -82,7 +82,8 @@ async fn main() {
         .route("/boards", get(api::list_boards))
         .route("/player", get(api::analyze_player))
         .route("/board", get(api::analyze_board))
-        .route("/bba-proxy", post(api::bba_proxy));
+        .route("/bba-proxy", post(api::bba_proxy))
+        .route("/names", post(api::update_names));
 
     // Admin routes
     let admin_routes = Router::new()

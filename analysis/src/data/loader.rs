@@ -13,6 +13,17 @@ pub fn load_game_data(
     pbn_path: Option<&Path>,
     _masterpoints_url: Option<&str>,
 ) -> Result<GameData> {
+    load_game_data_with_overrides(bws_path, pbn_path, None)
+}
+
+/// Load game data with optional name overrides (ACBL number -> display name).
+/// Overrides are applied during loading so PlayerIds are created with the
+/// right names from the start.
+pub fn load_game_data_with_overrides(
+    bws_path: &Path,
+    pbn_path: Option<&Path>,
+    name_overrides: Option<&HashMap<String, String>>,
+) -> Result<GameData> {
     // 1. Load BWS data (required)
     let bws_data = read_bws(bws_path)?;
 
@@ -25,11 +36,15 @@ pub fn load_game_data(
     };
 
     // 3. Merge data
-    merge_data(bws_data, pbn_boards)
+    merge_data(bws_data, pbn_boards, name_overrides)
 }
 
 /// Merge BWS and PBN data into GameData
-fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
+fn merge_data(
+    bws_data: BwsData,
+    pbn_boards: Vec<Board>,
+    name_overrides: Option<&HashMap<String, String>>,
+) -> Result<GameData> {
     let mut game_data = GameData::new();
 
     // Extract event info from Session table
@@ -63,11 +78,9 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
         }
     }
 
-    // Build pair-number-to-players lookup using RoundData (handles all movements)
+    // Build pair-number-to-players lookup using RoundData (handles all movements).
+    // Each entry carries (name, ACBL number) for both players in the pair.
     let pair_lookup = build_pair_lookup(&bws_data);
-
-    // Build ACBL number lookup from PlayerNames table
-    let acbl_lookup = build_acbl_lookup(&bws_data);
 
     // Process each result
     for received in &bws_data.received_data {
@@ -85,30 +98,55 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
         let ns_pair_num = received.pair_ns;
         let ew_pair_num = received.pair_ew;
 
-        let (n_name, s_name) = pair_lookup
+        // NS pair: first=N, second=S
+        let ((mut n_name, n_acbl), (mut s_name, s_acbl)) = pair_lookup
             .get(&(received.section, ns_pair_num, true))
             .cloned()
             .unwrap_or_else(|| {
                 resolve_pair_from_table(&bws_data, received.section, ns_pair_num, "NS")
             });
-        let (e_name, w_name) = pair_lookup
+        // EW pair: first=W, second=E (seat-based display ordering)
+        let ((mut w_name, w_acbl), (mut e_name, e_acbl)) = pair_lookup
             .get(&(received.section, ew_pair_num, false))
             .cloned()
             .unwrap_or_else(|| {
                 resolve_pair_from_table(&bws_data, received.section, ew_pair_num, "EW")
             });
 
-        // Get ACBL numbers if available
-        let n_acbl = acbl_lookup.get(&n_name).cloned();
-        let s_acbl = acbl_lookup.get(&s_name).cloned();
-        let e_acbl = acbl_lookup.get(&e_name).cloned();
-        let w_acbl = acbl_lookup.get(&w_name).cloned();
+        // Apply name overrides: if an ACBL number has an override and the
+        // current name is a placeholder, replace it with the overridden name.
+        if let Some(overrides) = name_overrides {
+            let apply = |name: &mut String, acbl: &Option<String>| {
+                if name.starts_with("Player ") {
+                    if let Some(acbl_num) = acbl {
+                        if let Some(real_name) = overrides.get(acbl_num) {
+                            *name = real_name.clone();
+                        }
+                    }
+                }
+            };
+            apply(&mut n_name, &n_acbl);
+            apply(&mut s_name, &s_acbl);
+            apply(&mut e_name, &e_acbl);
+            apply(&mut w_name, &w_acbl);
+        }
 
-        // Register players
+        // Register players (ACBL numbers preserved even when name is a placeholder)
         let n_id = game_data.players.get_or_create(&n_name, n_acbl);
         let s_id = game_data.players.get_or_create(&s_name, s_acbl);
         let e_id = game_data.players.get_or_create(&e_name, e_acbl);
         let w_id = game_data.players.get_or_create(&w_name, w_acbl);
+
+        // Track pair number → (first_player, second_player) in display order
+        // (N-S for NS pair, W-E for EW pair). Used for name-override paste lookup.
+        game_data
+            .pairs_by_number
+            .entry((received.section, ns_pair_num))
+            .or_insert_with(|| (n_id.clone(), s_id.clone()));
+        game_data
+            .pairs_by_number
+            .entry((received.section, ew_pair_num))
+            .or_insert_with(|| (w_id.clone(), e_id.clone()));
 
         // Create partnerships with seat-based display ordering
         // NS pairs: North displayed first; EW pairs: West displayed first
@@ -190,33 +228,45 @@ fn merge_data(bws_data: BwsData, pbn_boards: Vec<Board>) -> Result<GameData> {
     Ok(game_data)
 }
 
-/// Build a lookup from (section, pair_number, is_ns) to (player1, player2).
+/// A resolved player identity (name + ACBL number).
+/// Both fields come from PlayerNumbers; ACBL number may be preserved
+/// even when the name is empty (falls back to a placeholder name).
+type PlayerEntry = (String, Option<String>);
+
+/// Build a lookup from (section, pair_number, is_ns) to
+/// ((player1_name, player1_acbl), (player2_name, player2_acbl)).
 ///
 /// Uses RoundData round 1 to map pair numbers to physical tables, then
-/// PlayerNumbers to get player names. The `is_ns` flag disambiguates
-/// Mitchell movements where NS pair 5 and EW pair 5 are different pairs
-/// at the same table. In Howell movements, a pair number only appears in
-/// one column (NS or EW) per round, but may appear in either column across
-/// rounds — we store both keys so lookup works from either column.
-fn build_pair_lookup(bws_data: &BwsData) -> HashMap<(i32, i32, bool), (String, String)> {
-    // Build raw (section, table, direction) -> name map from PlayerNumbers
-    let mut player_at: HashMap<(i32, i32, &str), String> = HashMap::new();
+/// PlayerNumbers to get player names and ACBL numbers. When a seat has
+/// an ACBL number but no name, a placeholder like "Player N-3" is used
+/// for the name and the ACBL number is still carried through.
+fn build_pair_lookup(bws_data: &BwsData) -> HashMap<(i32, i32, bool), (PlayerEntry, PlayerEntry)> {
+    // Build raw (section, table, direction) -> (name, acbl) map from PlayerNumbers.
+    // Preserves ACBL numbers even when names are empty.
+    let mut player_at: HashMap<(i32, i32, &'static str), PlayerEntry> = HashMap::new();
     for pn in &bws_data.player_numbers {
-        if let Some(ref name) = pn.name {
-            if !name.is_empty() {
-                let dir = match pn.direction.as_str() {
-                    "N" => "N",
-                    "S" => "S",
-                    "E" => "E",
-                    "W" => "W",
-                    _ => continue,
-                };
-                player_at.insert((pn.section, pn.table, dir), name.clone());
-            }
-        }
+        let dir: &'static str = match pn.direction.as_str() {
+            "N" => "N",
+            "S" => "S",
+            "E" => "E",
+            "W" => "W",
+            _ => continue,
+        };
+        let name = pn
+            .name
+            .as_ref()
+            .filter(|n| !n.is_empty())
+            .cloned()
+            .unwrap_or_else(|| format!("Player {}-{}", dir, pn.table));
+        let acbl = if pn.number.is_empty() {
+            None
+        } else {
+            Some(pn.number.clone())
+        };
+        player_at.insert((pn.section, pn.table, dir), (name, acbl));
     }
 
-    let mut pair_lookup: HashMap<(i32, i32, bool), (String, String)> = HashMap::new();
+    let mut pair_lookup: HashMap<(i32, i32, bool), (PlayerEntry, PlayerEntry)> = HashMap::new();
 
     if bws_data.round_data.is_empty() {
         return pair_lookup;
@@ -233,29 +283,26 @@ fn build_pair_lookup(bws_data: &BwsData) -> HashMap<(i32, i32, bool), (String, S
             let p1 = player_at.get(&(rd.section, rd.table, "N"));
             let p2 = player_at.get(&(rd.section, rd.table, "S"));
             if let (Some(p1), Some(p2)) = (p1, p2) {
-                let names = (p1.clone(), p2.clone());
-                // Store under is_ns=true (always valid for round 1)
-                pair_lookup.insert((rd.section, rd.ns_pair, true), names.clone());
-                // Also store under is_ns=false for Howell, where this pair
-                // may appear as EW in later rounds. Won't collide in Mitchell
-                // because Mitchell NS pair N ≠ EW pair N (different players).
-                // Actually in Mitchell they DO collide, so only store the
-                // false key if the pair numbers differ (Howell indicator).
+                let entries = (p1.clone(), p2.clone());
+                pair_lookup.insert((rd.section, rd.ns_pair, true), entries.clone());
+                // Also store under is_ns=false for Howell where this pair
+                // may appear as EW in later rounds. Skip in Mitchell (where
+                // NS pair N == EW pair N and would overwrite the EW pair).
                 if rd.ns_pair != rd.ew_pair {
-                    pair_lookup.insert((rd.section, rd.ns_pair, false), names);
+                    pair_lookup.insert((rd.section, rd.ns_pair, false), entries);
                 }
             }
         }
 
-        // EW pair at this table in round 1 → E/W players
+        // EW pair at this table in round 1 → E/W players (W displayed first)
         if rd.ew_pair > 0 {
-            let p1 = player_at.get(&(rd.section, rd.table, "E"));
-            let p2 = player_at.get(&(rd.section, rd.table, "W"));
+            let p1 = player_at.get(&(rd.section, rd.table, "W"));
+            let p2 = player_at.get(&(rd.section, rd.table, "E"));
             if let (Some(p1), Some(p2)) = (p1, p2) {
-                let names = (p1.clone(), p2.clone());
-                pair_lookup.insert((rd.section, rd.ew_pair, false), names.clone());
+                let entries = (p1.clone(), p2.clone());
+                pair_lookup.insert((rd.section, rd.ew_pair, false), entries.clone());
                 if rd.ns_pair != rd.ew_pair {
-                    pair_lookup.insert((rd.section, rd.ew_pair, true), names);
+                    pair_lookup.insert((rd.section, rd.ew_pair, true), entries);
                 }
             }
         }
@@ -266,46 +313,41 @@ fn build_pair_lookup(bws_data: &BwsData) -> HashMap<(i32, i32, bool), (String, S
 
 /// Fallback for when pair_lookup has no entry: look up by table + direction.
 /// Used for Mitchell movements where pair number = table number.
+/// Returns entries in display order: NS = (N, S), EW = (W, E).
 fn resolve_pair_from_table(
     bws_data: &BwsData,
     section: i32,
     table: i32,
     dir: &str,
-) -> (String, String) {
+) -> (PlayerEntry, PlayerEntry) {
     let (d1, d2) = match dir {
         "NS" => ("N", "S"),
-        _ => ("E", "W"),
+        _ => ("W", "E"),
     };
-    let p1 = bws_data
-        .get_player_at(section, table, d1)
-        .unwrap_or_default();
-    let p2 = bws_data
-        .get_player_at(section, table, d2)
-        .unwrap_or_default();
-    let name1 = if p1.is_empty() {
-        format!("Player {}-{}", d1, table)
-    } else {
-        p1.to_string()
-    };
-    let name2 = if p2.is_empty() {
-        format!("Player {}-{}", d2, table)
-    } else {
-        p2.to_string()
-    };
-    (name1, name2)
-}
-
-/// Build a lookup from player name to ACBL number
-fn build_acbl_lookup(bws_data: &BwsData) -> HashMap<String, String> {
-    let mut lookup = HashMap::new();
-
-    for pn in &bws_data.player_names {
-        if !pn.str_id.is_empty() {
-            lookup.insert(pn.name.clone(), pn.str_id.clone());
+    let lookup_seat = |d: &str| -> PlayerEntry {
+        let pn = bws_data
+            .player_numbers
+            .iter()
+            .find(|p| p.section == section && p.table == table && p.direction == d);
+        match pn {
+            Some(pn) => {
+                let name = pn
+                    .name
+                    .as_ref()
+                    .filter(|n| !n.is_empty())
+                    .cloned()
+                    .unwrap_or_else(|| format!("Player {}-{}", d, table));
+                let acbl = if pn.number.is_empty() {
+                    None
+                } else {
+                    Some(pn.number.clone())
+                };
+                (name, acbl)
+            }
+            None => (format!("Player {}-{}", d, table), None),
         }
-    }
-
-    lookup
+    };
+    (lookup_seat(d1), lookup_seat(d2))
 }
 
 /// Parse declarer direction from BWS format

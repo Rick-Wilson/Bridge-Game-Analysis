@@ -27,6 +27,27 @@ pub struct UploadResponse {
     /// Number of players with placeholder names (e.g., "Player N-1").
     /// Non-zero indicates the BWS file lacks ACBL name data.
     pub missing_names: usize,
+    /// Map of display_name -> ACBL number for all players that have one.
+    /// Used by the client to build up its localStorage dictionary.
+    pub player_acbl: std::collections::HashMap<String, String>,
+    /// Info about placeholder players, so the client can look up saved
+    /// names in localStorage by ACBL number and auto-populate.
+    pub missing_players: Vec<MissingPlayerInfo>,
+    /// Pair-number lookup for the paste parser: pair_num -> [acbl1, acbl2]
+    /// in display order (N-S or W-E). Only includes pairs where at least
+    /// one seat has a placeholder name.
+    pub pair_acbl: std::collections::HashMap<String, Vec<Option<String>>>,
+}
+
+#[derive(Serialize)]
+pub struct MissingPlayerInfo {
+    pub display_name: String,
+    pub acbl_number: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct UpdateNamesResponse {
+    pub total_names: usize,
 }
 
 #[derive(Serialize)]
