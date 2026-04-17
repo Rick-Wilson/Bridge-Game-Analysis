@@ -154,6 +154,12 @@ tr.clickable-row:hover td { background: #e0e7ff; }
     <input type="file" id="pbn-add-input" accept=".pbn,.PBN" style="display:none;">
   </div>
 
+  <div id="names-notice" class="pbn-notice hidden">
+    <strong>Warning:</strong> This BWS file does not include player names
+    (the club computer's ACBL name database wasn't loaded when the file was exported).
+    Players will appear as placeholders like "Player N-1".
+  </div>
+
   <!-- Event header -->
   <div id="event-header" class="event-header hidden">
     <div class="event-info"><strong id="event-name"></strong><span id="event-date"></span></div>
@@ -277,6 +283,7 @@ async function doUpload(files, addTo) {
     document.getElementById('download-help').classList.add('hidden');
     document.getElementById('event-header').classList.remove('hidden');
     document.getElementById('pbn-notice').classList.toggle('hidden', hasPbn || data.has_pbn);
+    document.getElementById('names-notice').classList.toggle('hidden', !data.missing_names);
     switchView('players');
   } catch (e) { showError(e.message); }
   finally { showLoading(false); }
@@ -294,6 +301,7 @@ document.getElementById('new-file-btn').addEventListener('click', () => {
   document.getElementById('player-grid').classList.add('hidden');
   document.getElementById('board-grid').classList.add('hidden');
   document.getElementById('pbn-notice').classList.add('hidden');
+  document.getElementById('names-notice').classList.add('hidden');
   hideAll();
 });
 

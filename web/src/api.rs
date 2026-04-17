@@ -123,15 +123,20 @@ pub async fn upload_files(
             )
         })?;
 
-    // Extract player list
+    // Extract player list (keep placeholder names so player grid isn't empty)
     let mut players: Vec<String> = game_data
         .players
         .all_players()
         .map(|p| p.display_name())
-        .filter(|name| !name.starts_with("Player ")) // Filter placeholders
         .collect();
     players.sort();
     players.dedup();
+
+    // Count placeholder names (indicates the BWS had no ACBL name lookup)
+    let missing_names = players
+        .iter()
+        .filter(|name| name.starts_with("Player "))
+        .count();
 
     // Extract board list
     let mut boards: Vec<u32> = game_data.results.iter().map(|r| r.board_number).collect();
@@ -181,6 +186,7 @@ pub async fn upload_files(
         boards,
         result_count,
         has_pbn: pbn_path.is_some(),
+        missing_names,
     }))
 }
 
@@ -194,7 +200,6 @@ pub async fn list_players(
         .players
         .all_players()
         .map(|p| p.display_name())
-        .filter(|name| !name.starts_with("Player "))
         .collect();
     players.sort();
     players.dedup();

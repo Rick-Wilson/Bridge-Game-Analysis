@@ -24,6 +24,9 @@ pub struct UploadResponse {
     pub board_count: usize,
     pub result_count: usize,
     pub has_pbn: bool,
+    /// Number of players with placeholder names (e.g., "Player N-1").
+    /// Non-zero indicates the BWS file lacks ACBL name data.
+    pub missing_names: usize,
 }
 
 #[derive(Serialize)]
