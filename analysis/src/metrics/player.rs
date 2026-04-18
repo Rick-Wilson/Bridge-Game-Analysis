@@ -177,6 +177,8 @@ pub struct BoardContext {
     ew_typically_declares: bool,
     /// Direction that typically declares the field contract (None if evenly split)
     field_declaring_direction: Option<PartnershipDirection>,
+    /// Par contract string from PBN (e.g., "NS 3H=" or "EW 3N+2")
+    par_contract: Option<String>,
 }
 
 impl BoardContext {
@@ -286,6 +288,9 @@ struct CauseContext<'a> {
     competitive: Option<&'a CompetitiveInfo>,
     contract: &'a Option<ParsedContract>,
     field_contract: &'a Option<ParsedContract>,
+    /// True when the player's contract matches par (same level+strain,
+    /// declared by player's side).
+    contract_is_par: bool,
 }
 
 // ==================== Public Analysis Functions ====================
@@ -382,7 +387,8 @@ pub fn analyze_player(data: &GameData, player_name: &str) -> Option<PlayerAnalys
         // Compute board context and run shared analysis
         let all_board_results = data.results_for_board(result.board_number);
         let board_data = data.boards.get(&result.board_number);
-        let board_ctx = compute_board_context(&all_board_results);
+        let par_contract = board_data.and_then(|b| b.par_contract.clone());
+        let board_ctx = compute_board_context(&all_board_results, par_contract);
         let analysis = analyze_direction(
             result,
             direction,
@@ -509,7 +515,8 @@ pub fn analyze_board(data: &GameData, board_number: u32) -> Option<BoardAnalysis
     }
 
     let board_data = data.boards.get(&board_number);
-    let board_ctx = compute_board_context(&all_results);
+    let par_contract = board_data.and_then(|b| b.par_contract.clone());
+    let board_ctx = compute_board_context(&all_results, par_contract);
 
     let mut results = Vec::new();
     for result in &all_results {
@@ -584,7 +591,10 @@ pub fn analyze_board(data: &GameData, board_number: u32) -> Option<BoardAnalysis
 ///
 /// This pre-computes everything about "what the field did" so that
 /// individual results can be evaluated efficiently and symmetrically.
-pub fn compute_board_context(all_results: &[&BoardResult]) -> BoardContext {
+pub fn compute_board_context(
+    all_results: &[&BoardResult],
+    par_contract: Option<String>,
+) -> BoardContext {
     // Field contract: most common contract
     let field_contract = {
         let mut counts: HashMap<String, (ParsedContract, usize)> = HashMap::new();
@@ -658,6 +668,7 @@ pub fn compute_board_context(all_results: &[&BoardResult]) -> BoardContext {
         ns_typically_declares,
         ew_typically_declares,
         field_declaring_direction,
+        par_contract,
     }
 }
 
@@ -714,6 +725,16 @@ fn analyze_direction(
         bd.dd_tricks(result.declarer_direction, contract.strain)
     });
 
+    // Check if this contract matches par (same level+strain, declared by this side)
+    let declarer_is_ns = result.declaring_direction() == PartnershipDirection::NorthSouth;
+    let player_side_is_declarer = declarer_is_ns == (direction == PartnershipDirection::NorthSouth);
+    let contract_is_par = player_side_is_declarer
+        && result
+            .contract
+            .as_ref()
+            .map(|c| contract_matches_par(c, declarer_is_ns, board_ctx.par_contract.as_deref()))
+            .unwrap_or(false);
+
     let cause_ctx = CauseContext {
         role,
         matchpoint_pct,
@@ -729,6 +750,7 @@ fn analyze_direction(
         competitive: board_ctx.competitive_info(direction),
         contract: &result.contract,
         field_contract: &board_ctx.field_contract,
+        contract_is_par,
     };
     let (cause, notes) = determine_cause_and_notes(&cause_ctx);
 
@@ -756,6 +778,16 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
 
     match ctx.role {
         PlayerRole::Declarer => {
+            // If we bid par and took same tricks as DD suggests, it's a
+            // normal result — nothing to critique about auction or play.
+            if ctx.contract_is_par {
+                if let (Some(dd), Some(made)) = (ctx.dd_tricks, ctx.tricks_made) {
+                    if made == dd {
+                        return (ResultCause::Good, format!("par ({})", dd));
+                    }
+                }
+            }
+
             // On competitive boards: declaring in own strain at a level
             // below where opponents typically compete → Lucky
             if let Some(comp) = ctx.competitive {
@@ -776,6 +808,17 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
                 if is_good_result {
                     return (ResultCause::Good, "competed successfully".to_string());
                 } else if is_bad_result {
+                    // Distinguish between "contract can't make" (auction
+                    // error) and "contract can make but declarer went down"
+                    // (play error) using DD.
+                    if let (Some(c), Some(dd), true) = (ctx.contract, ctx.dd_tricks, ctx.went_down)
+                    {
+                        let needed = c.level + 6;
+                        if dd >= needed {
+                            // DD says the contract makes; going down is Play.
+                            return (ResultCause::Play, format!("below DD ({})", dd));
+                        }
+                    }
                     return (ResultCause::Auction, "competed too high".to_string());
                 }
                 return (ResultCause::Auction, "competed".to_string());
@@ -882,6 +925,15 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
             }
         }
         PlayerRole::Dummy => {
+            // Par contract with DD-par tricks: normal result, no critique.
+            if ctx.contract_is_par {
+                if let (Some(dd), Some(made)) = (ctx.dd_tricks, ctx.tricks_made) {
+                    if made == dd {
+                        return (ResultCause::Good, format!("par ({})", dd));
+                    }
+                }
+            }
+
             // Competitive boards: partner declaring in own strain below opponent's max
             if let Some(comp) = ctx.competitive {
                 if let Some(c) = ctx.contract {
@@ -900,6 +952,13 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
                 if is_good_result {
                     return (ResultCause::Good, "competed successfully".to_string());
                 } else if is_bad_result {
+                    if let (Some(c), Some(dd), true) = (ctx.contract, ctx.dd_tricks, ctx.went_down)
+                    {
+                        let needed = c.level + 6;
+                        if dd >= needed {
+                            return (ResultCause::Play, format!("pard below DD ({})", dd));
+                        }
+                    }
                     return (ResultCause::Auction, "competed too high".to_string());
                 }
                 return (ResultCause::Auction, "competed".to_string());
@@ -992,6 +1051,18 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
             }
         }
         PlayerRole::Defender => {
+            // "Didn't double" — opps went down but defender got a bad score.
+            // Means the contract was undoubled and the field got better
+            // penalties (or doubled scores) at other tables.
+            // Only flag when the contract was undoubled (ctx.contract.doubled).
+            if ctx.went_down && ctx.matchpoint_pct < 45.0 {
+                if let Some(c) = ctx.contract {
+                    if c.doubled == bridge_parsers::Doubled::None {
+                        return (ResultCause::Auction, "didn't double".to_string());
+                    }
+                }
+            }
+
             // Competitive boards: defending opponent's strain
             if let Some(comp) = ctx.competitive {
                 if let Some(c) = ctx.contract {
@@ -1010,7 +1081,14 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
                         if is_bad_result {
                             return (ResultCause::Auction, note);
                         } else if is_good_result {
-                            return (ResultCause::Lucky, "opps stopped low".to_string());
+                            // Distinguish between opps going down (bid too
+                            // high) vs making a modest contract (stopped low).
+                            let opps_note = if ctx.went_down {
+                                "opps bid too high"
+                            } else {
+                                "opps stopped low"
+                            };
+                            return (ResultCause::Lucky, opps_note.to_string());
                         }
                     }
                 }
@@ -1355,6 +1433,74 @@ fn compute_competitive_info(
         }
         _ => None,
     }
+}
+
+/// Check if a contract matches the par contract for the declaring side.
+///
+/// Par contract format from PBN: `<side> <level><strain>[result][...]`, e.g.:
+/// - "NS 3H=" — NS should play 3H making
+/// - "EW 3N+2" — EW should play 3NT making 5
+/// - "N 4H=; S 4S=" — tie between N playing 4H and S playing 4S
+/// - "EW 7S=" — EW should play 7S making
+///
+/// We only care about matching level+strain on the player's side.
+fn contract_matches_par(
+    actual: &ParsedContract,
+    declarer_is_ns: bool,
+    par_contract: Option<&str>,
+) -> bool {
+    use bridge_parsers::Strain;
+    let par = match par_contract {
+        Some(p) => p,
+        None => return false,
+    };
+    for part in par.split([';', ',']) {
+        let part = part.trim();
+        let mut tokens = part.split_whitespace();
+        let side = match tokens.next() {
+            Some(s) => s,
+            None => continue,
+        };
+        let contract_str = match tokens.next() {
+            Some(s) => s,
+            None => continue,
+        };
+
+        let side_is_ns = match side {
+            "NS" | "N" | "S" => true,
+            "EW" | "E" | "W" => false,
+            _ => continue,
+        };
+        if side_is_ns != declarer_is_ns {
+            continue;
+        }
+
+        // Parse level: single digit
+        let mut chars = contract_str.chars();
+        let level = match chars.next().and_then(|c| c.to_digit(10)) {
+            Some(l) => l as u8,
+            None => continue,
+        };
+
+        // Parse strain
+        let rest: String = chars.collect();
+        let strain = if rest.starts_with("NT") || rest.starts_with('N') {
+            Strain::NoTrump
+        } else {
+            match rest.chars().next() {
+                Some('S') => Strain::Spades,
+                Some('H') => Strain::Hearts,
+                Some('D') => Strain::Diamonds,
+                Some('C') => Strain::Clubs,
+                _ => continue,
+            }
+        };
+
+        if actual.level == level && actual.strain == strain {
+            return true;
+        }
+    }
+    false
 }
 
 /// Whether a contract is at game level or higher for its strain.
