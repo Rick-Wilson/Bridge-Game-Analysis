@@ -219,6 +219,7 @@ tr.clickable-row:hover td { background: #e0e7ff; }
       </div>
       <div id="side-panel" class="side-panel">
         <div id="dd-section"><div class="bba-loading">Loading DD analysis...</div></div>
+        <div id="par-section" class="hidden" style="margin-top:0.75rem;border-top:1px solid var(--border);padding-top:0.75rem;"></div>
         <div id="bba-section" style="margin-top:0.75rem;border-top:1px solid var(--border);padding-top:0.75rem;"><div class="bba-loading">Loading BBA auction...</div></div>
       </div>
     </div>
@@ -641,10 +642,13 @@ function renderBoard(data) {
   document.getElementById('viewer-row').classList.toggle('hidden', !hasViewer);
   if (hasViewer) {
     setViewerRow(activeRowIdx);
-    // Fetch DD and BBA data
+    // Render par, fetch DD and BBA data
     if (data.deal_info) {
+      renderPar(data.deal_info);
       fetchDD(data.deal_info, data.results[activeRowIdx]);
       fetchBBA(data.deal_info);
+    } else {
+      document.getElementById('par-section').classList.add('hidden');
     }
   }
 
@@ -735,6 +739,42 @@ function parseDDTrick(ch) {
   if (ch >= 'a' && ch <= 'd') return 10 + ch.charCodeAt(0) - 97;
   if (ch >= 'A' && ch <= 'D') return 10 + ch.charCodeAt(0) - 65;
   return 0;
+}
+
+/** Render the par contract from PBN data.
+ *  Input: par_contract like "EW 3N+2" (side + bid + result),
+ *         optimum_score like "EW 460".
+ *  May have multiple contracts separated by semicolon for ties. */
+function renderPar(dealInfo) {
+  const el = document.getElementById('par-section');
+  if (!dealInfo.par_contract && !dealInfo.optimum_score) {
+    el.classList.add('hidden');
+    return;
+  }
+  el.classList.remove('hidden');
+
+  // Render each par contract with suit symbols
+  const contracts = (dealInfo.par_contract || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);
+  const renderedContracts = contracts.map(c => {
+    // e.g., "EW 3N+2" → "EW 3NT+2" with suit symbol
+    // e.g., "NS 1S+2" → "NS 1♠+2"
+    // Match: <side> <level><strain><result>
+    const m = c.match(/^(NS|EW)\s+(\d)(NT|[SHDCN])(.*)$/);
+    if (!m) return c;
+    const side = m[1];
+    const level = m[2];
+    const strain = m[3] === 'N' ? 'NT' : m[3];
+    const rest = m[4]; // e.g., "+2", "-1", "X+1"
+    return `${side} ${level}${suitSymbol(strain)}${rest}`;
+  }).join(' / ');
+
+  const optScore = dealInfo.optimum_score || '';
+
+  el.innerHTML = `
+    <h4>Par Contract</h4>
+    <div style="font-size:0.9rem;font-weight:500;margin-bottom:0.25rem;">${renderedContracts || '-'}</div>
+    <div style="font-size:0.8rem;color:var(--text-muted);">${optScore}</div>
+  `;
 }
 
 function renderDDTable(ddtricks, activeResult) {

@@ -379,6 +379,8 @@ pub async fn analyze_board(
                 pbn: Some(deal.to_pbn(board_data.dealer)),
                 dealer: dealer_str.to_string(),
                 vulnerability: vul_str.to_string(),
+                par_contract: board_data.par_contract.clone(),
+                optimum_score: board_data.optimum_score.clone(),
             });
         }
     }

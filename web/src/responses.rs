@@ -139,6 +139,10 @@ pub struct BoardDealInfo {
     pub dealer: String,
     /// Vulnerability (None/NS/EW/Both)
     pub vulnerability: String,
+    /// Par contract string from PBN (e.g., "EW 3N+2")
+    pub par_contract: Option<String>,
+    /// Optimum score string from PBN (e.g., "EW 460")
+    pub optimum_score: Option<String>,
 }
 
 #[derive(Serialize)]
