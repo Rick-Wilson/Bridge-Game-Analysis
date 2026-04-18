@@ -870,8 +870,10 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
                 }
             }
 
-            // Fall through: no trick data, or tricks matched, or no auction note
-            if !ctx.matched_field_contract {
+            // Fall through: no trick data or tricks matched.
+            // Only classify as Auction if the auction actually differed
+            // meaningfully (non-empty note).
+            if !ctx.matched_field_contract && !auction_note.is_empty() {
                 if is_good_result {
                     return (ResultCause::Good, auction_note);
                 } else {
@@ -980,8 +982,9 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
                 }
             }
 
-            // Fall through to auction check
-            if !ctx.matched_field_contract {
+            // Fall through to auction check. Only classify as Auction
+            // if the auction actually differed meaningfully.
+            if !ctx.matched_field_contract && !auction_note.is_empty() {
                 if is_good_result {
                     return (ResultCause::Good, auction_note);
                 }
@@ -1063,20 +1066,33 @@ fn determine_cause_and_notes(ctx: &CauseContext<'_>) -> (ResultCause, String) {
                         return (ResultCause::Defense, note);
                     }
                 }
-                // Same strain, different level — opponent's auction choice
+                // Same strain, different level — opponent's auction choice.
+                // Only flag as "underbid"/"overbid" when the level difference
+                // crosses a scoring threshold (game/slam); otherwise the
+                // level difference doesn't matter for the score.
                 if !ctx.matched_field_contract {
                     if let (Some(actual), Some(field)) = (ctx.contract, ctx.field_contract) {
                         if actual.level < field.level {
-                            if is_good_result {
-                                return (ResultCause::Lucky, "opps underbid".to_string());
-                            } else if is_bad_result {
-                                return (ResultCause::Unlucky, "opps underbid".to_string());
+                            let crosses_threshold = (is_game_level(field)
+                                && !is_game_level(actual))
+                                || (field.level >= 6 && actual.level < 6);
+                            if crosses_threshold {
+                                if is_good_result {
+                                    return (ResultCause::Lucky, "opps underbid".to_string());
+                                } else if is_bad_result {
+                                    return (ResultCause::Unlucky, "opps underbid".to_string());
+                                }
                             }
                         } else if actual.level > field.level {
-                            if is_good_result {
-                                return (ResultCause::Lucky, "opps overbid".to_string());
-                            } else if is_bad_result {
-                                return (ResultCause::Unlucky, "opps overbid".to_string());
+                            let crosses_threshold = (is_game_level(actual)
+                                && !is_game_level(field))
+                                || (actual.level >= 6 && field.level < 6);
+                            if crosses_threshold {
+                                if is_good_result {
+                                    return (ResultCause::Lucky, "opps overbid".to_string());
+                                } else if is_bad_result {
+                                    return (ResultCause::Unlucky, "opps overbid".to_string());
+                                }
                             }
                         }
                     }
@@ -1136,11 +1152,28 @@ fn format_auction_note(
                 // Different strain
                 format!("{} vs {}", actual_strain, field_strain)
             } else if actual_level < field_level {
-                // Underbid
-                format!("underbid ({})", field.display())
+                // Only call it an "underbid" if the field reached game/slam
+                // that this contract didn't. 2S vs 3S (both part-scores,
+                // same strain) scores the same on any number of tricks,
+                // so the level difference is meaningless.
+                let missed_game = is_game_level(field) && !is_game_level(actual);
+                let missed_slam = field.level >= 6 && actual.level < 6;
+                if missed_game || missed_slam {
+                    format!("underbid ({})", field.display())
+                } else {
+                    String::new()
+                }
             } else {
-                // Overbid
-                format!("overbid ({})", field.display())
+                // Only call it an "overbid" if this contract went to a
+                // higher scoring tier than the field (3S vs 2S when
+                // both make part-score doesn't matter).
+                let extra_game = is_game_level(actual) && !is_game_level(field);
+                let extra_slam = actual.level >= 6 && field.level < 6;
+                if extra_game || extra_slam {
+                    format!("overbid ({})", field.display())
+                } else {
+                    String::new()
+                }
             }
         }
         (Some(_), None) => String::new(),
