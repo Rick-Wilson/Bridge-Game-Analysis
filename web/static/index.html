@@ -576,8 +576,11 @@ function goToPlayer(name) {
 
 // ==================== Board ====================
 async function selectBoard(btn, num, keepPlayer) {
-  document.querySelectorAll('.board-grid button:not(.nav-arrow)').forEach(b => b.classList.remove('active'));
-  if (btn) btn.classList.add('active');
+  // Highlight the button for this board number.
+  // If called without a btn (e.g. from nav arrows), look it up by number.
+  document.querySelectorAll('.board-grid button:not(.nav-arrow)').forEach(b => {
+    b.classList.toggle('active', b === btn || parseInt(b.textContent, 10) === num);
+  });
   currentBoard = num;
   if (!keepPlayer) currentPlayerName = null;
   document.getElementById('player-results').classList.add('hidden');
