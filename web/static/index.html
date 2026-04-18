@@ -253,8 +253,6 @@ tr.clickable-row:hover td { background: #e0e7ff; }
 
 <script>
 const BASE = '{{BASE_PATH}}';
-// Disable browser's automatic scroll restoration so our manual handling wins
-if ('scrollRestoration' in history) { history.scrollRestoration = 'manual'; }
 let sessionId = null;
 let cachedPlayers = [];
 let cachedBoards = [];
@@ -581,24 +579,12 @@ async function selectBoard(btn, num, keepPlayer) {
   if (btn) btn.classList.add('active');
   currentBoard = num;
   if (!keepPlayer) currentPlayerName = null;
-  // Hide player-results if showing, but keep board-results in place so the
-  // previous board's table stays visible during the fetch — prevents
-  // the page from collapsing and the scroll position from jumping.
   document.getElementById('player-results').classList.add('hidden');
-  const scrollY = window.scrollY;
   showLoading(true); showError('');
   try {
     const res = await fetch(`${BASE}/api/board?session=${sessionId}&num=${num}`);
     if (!res.ok) throw new Error(await res.text());
     renderBoard(await res.json());
-    // Preserve scroll position so clicking through boards doesn't jump.
-    // Restore on multiple animation frames in case layout shifts as the
-    // iframe and tables reflow after rendering.
-    requestAnimationFrame(() => {
-      window.scrollTo(0, scrollY);
-      requestAnimationFrame(() => window.scrollTo(0, scrollY));
-      setTimeout(() => window.scrollTo(0, scrollY), 100);
-    });
   } catch (e) { showError(e.message); }
   finally { showLoading(false); }
 }
