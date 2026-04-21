@@ -792,12 +792,13 @@ function renderPar(dealInfo) {
 }
 
 function renderDDTable(ddtricks, activeResult) {
-  // Parse the active (user) contract
+  // Parse the active (user) contract.
+  // Format: <level><strain>[X|XX]<declarer>[result], e.g. "2HXS+1" or "4SN=".
   let userSeat = null, userSuitIdx = null;
   if (activeResult && activeResult.result_str) {
-    const m = activeResult.result_str.match(/^\d(NT|[SHDC])([NESW])/);
+    const m = activeResult.result_str.match(/^\d(NT|[SHDC])(X{0,2})([NESW])/);
     if (m) {
-      userSeat = m[2];
+      userSeat = m[3];
       const strainMap = {C:0, D:1, H:2, S:3, NT:4};
       userSuitIdx = strainMap[m[1]] ?? null;
     }
