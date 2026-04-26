@@ -7,8 +7,8 @@ pub mod metrics;
 // Re-export main types for convenience
 pub use config::Config;
 pub use data::{
-    load_game_data, load_game_data_with_overrides, BoardData, BoardResult, ContractResult,
-    GameData, ParsedContract, SeatPlayers,
+    load_game_data, load_game_data_with_overrides, render_par_display, BoardData, BoardResult,
+    ContractResult, GameData, ParContract, ParsedContract, SeatPlayers,
 };
 pub use error::{AnalysisError, Result};
 pub use identity::{normalize_name, Partnership, PartnershipDirection, Player, PlayerId};

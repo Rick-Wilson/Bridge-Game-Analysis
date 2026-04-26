@@ -62,6 +62,88 @@ impl ParsedContract {
     }
 }
 
+/// One par-contract entry. Multiple are possible when more than one
+/// declarer/strain ties for the optimal score (e.g. N 4H= and S 4S=
+/// both score 420 NS).
+#[derive(Debug, Clone)]
+pub struct ParContract {
+    /// Signed integer; positive = NS gain.
+    pub score: i32,
+    pub contract: ParsedContract,
+    pub declarer: Direction,
+    /// Tricks relative to contract (+1, -2, 0 for "="). May be None
+    /// for sources that didn't carry trick info; in that case the
+    /// builder fills it in by inverting the score.
+    pub tricks_relative: Option<i32>,
+}
+
+impl ParContract {
+    /// Side that declares this par contract ("NS" or "EW").
+    pub fn side(&self) -> &'static str {
+        match self.declarer {
+            Direction::North | Direction::South => "NS",
+            Direction::East | Direction::West => "EW",
+        }
+    }
+
+    /// Render in the historical PBN-style display, e.g. "EW 3NT+2",
+    /// "NS 4S=", or "EW 6SX-1". Strain is always two letters for NT.
+    pub fn display(&self) -> String {
+        let strain_str = match self.contract.strain {
+            Strain::Clubs => "C",
+            Strain::Diamonds => "D",
+            Strain::Hearts => "H",
+            Strain::Spades => "S",
+            Strain::NoTrump => "NT",
+        };
+        let doubled_str = match self.contract.doubled {
+            Doubled::None => "",
+            Doubled::Doubled => "X",
+            Doubled::Redoubled => "XX",
+        };
+        let suffix = match self.tricks_relative {
+            Some(0) => "=".to_string(),
+            Some(n) if n > 0 => format!("+{}", n),
+            Some(n) => format!("{}", n),
+            None => String::new(),
+        };
+        format!(
+            "{} {}{}{}{}",
+            self.side(),
+            self.contract.level,
+            strain_str,
+            doubled_str,
+            suffix
+        )
+    }
+
+    /// Render the score line like "EW 460" or "NS 420".
+    pub fn score_display(&self) -> String {
+        if self.score >= 0 {
+            format!("NS {}", self.score)
+        } else {
+            format!("EW {}", -self.score)
+        }
+    }
+}
+
+/// Render a slice of par contracts as a single contract string and a single
+/// score string (the score is the same across all entries by definition).
+/// Used by adapters that need the historical "EW 3N+2; N 4H=" / "EW 460"
+/// display pair from typed data.
+pub fn render_par_display(par: &[ParContract]) -> (Option<String>, Option<String>) {
+    if par.is_empty() {
+        return (None, None);
+    }
+    let contracts = par
+        .iter()
+        .map(|p| p.display())
+        .collect::<Vec<_>>()
+        .join("; ");
+    let score = par[0].score_display();
+    (Some(contracts), Some(score))
+}
+
 /// Per-declarer × per-strain double-dummy trick counts.
 ///
 /// Each entry says "if this declarer played in this strain, double-dummy
@@ -103,10 +185,9 @@ pub struct BoardData {
     pub deal: Option<Deal>,
     /// Double dummy tricks per declarer/strain (from PBN or schema input)
     pub double_dummy: Option<DoubleDummyTricks>,
-    /// Par contract string (if available from PBN)
-    pub par_contract: Option<String>,
-    /// Optimum score (if available from PBN)
-    pub optimum_score: Option<String>,
+    /// Par contracts. Empty when no par data is available. May contain
+    /// more than one entry when ties exist (e.g. N 4H= and S 4S=).
+    pub par: Vec<ParContract>,
 }
 
 impl BoardData {
@@ -124,14 +205,18 @@ impl BoardData {
             .as_deref()
             .and_then(parse_pbn_dd_string);
 
+        let par = parse_pbn_par(
+            board.par_contract.as_deref(),
+            board.optimum_score.as_deref(),
+        );
+
         Self {
             number: board.number.unwrap_or(0),
             dealer: board.dealer.unwrap_or(Direction::North),
             vulnerability: board.vulnerable,
             deal,
             double_dummy,
-            par_contract: board.par_contract.clone(),
-            optimum_score: board.optimum_score.clone(),
+            par,
         }
     }
 
@@ -243,6 +328,106 @@ impl SeatPlayers {
             east: ew_pair.second_player().display_name(),
         }
     }
+}
+
+/// Parse PBN par strings into typed `ParContract` entries.
+///
+/// `par_str` is the raw `[OptimumResultTable]` / `[ParContract]` value, e.g.:
+/// - `"NS 3H="` — NS plays 3H making
+/// - `"EW 3N+2"` — EW plays 3NT making 5
+/// - `"N 4H=; S 4S="` — tie between two declarers (semicolon or comma separated)
+/// - `"EW 7S="` — EW plays 7S making
+///
+/// `score_str` is the raw `[OptimumScore]` value, e.g. `"EW 460"`. The side
+/// determines the sign of the resulting NS-perspective score; the magnitude
+/// is shared across all par entries.
+///
+/// Returns an empty Vec if no par entries can be parsed.
+fn parse_pbn_par(par_str: Option<&str>, score_str: Option<&str>) -> Vec<ParContract> {
+    let par_str = match par_str {
+        Some(s) if !s.trim().is_empty() => s,
+        _ => return Vec::new(),
+    };
+
+    // Score: "EW 460" -> -460 from NS perspective; "NS 460" -> +460.
+    let signed_score: i32 = score_str
+        .map(|s| {
+            let mut tokens = s.split_whitespace();
+            let side = tokens.next().unwrap_or("");
+            let magnitude: i32 = tokens.next().and_then(|t| t.parse().ok()).unwrap_or(0);
+            match side {
+                "NS" | "N" | "S" => magnitude,
+                "EW" | "E" | "W" => -magnitude,
+                _ => 0,
+            }
+        })
+        .unwrap_or(0);
+
+    let mut out = Vec::new();
+    for part in par_str.split([';', ',']) {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        let mut tokens = part.split_whitespace();
+        let side = match tokens.next() {
+            Some(s) => s,
+            None => continue,
+        };
+        let body = match tokens.next() {
+            Some(s) => s,
+            None => continue,
+        };
+
+        // Split body into "<level><strain>[double]" + "<result>"
+        let (contract_part, result_part) = split_contract_and_result(body);
+
+        let contract = match ParsedContract::parse(contract_part) {
+            Some(c) => c,
+            None => continue,
+        };
+
+        // Pick a canonical declarer for the side. The PBN side string can be
+        // "NS"/"EW" (no specific seat) or a single seat letter "N"/"E"/"S"/"W".
+        let declarer = match side {
+            "N" => Direction::North,
+            "E" => Direction::East,
+            "S" => Direction::South,
+            "W" => Direction::West,
+            "NS" => Direction::North,
+            "EW" => Direction::East,
+            _ => continue,
+        };
+
+        let tricks_relative = parse_par_result(result_part);
+
+        out.push(ParContract {
+            score: signed_score,
+            contract,
+            declarer,
+            tricks_relative,
+        });
+    }
+    out
+}
+
+/// Split a par body like "3NT+2", "4SX-1", or "4H=" into (contract, result).
+/// The result is a string starting with `=`, `+N`, or `-N`; empty if absent.
+fn split_contract_and_result(body: &str) -> (&str, &str) {
+    if let Some(idx) = body.find(['=', '+', '-']) {
+        body.split_at(idx)
+    } else {
+        (body, "")
+    }
+}
+
+/// Parse the trick-suffix part of a par entry: "=" → 0, "+2" → 2, "-1" → -1.
+fn parse_par_result(s: &str) -> Option<i32> {
+    let s = s.trim();
+    if s == "=" {
+        return Some(0);
+    }
+    s.parse::<i32>().ok()
 }
 
 /// Parse a PBN `[DoubleDummyTricks "..."]` value into the typed map.
@@ -497,6 +682,39 @@ mod tests {
         assert!(parse_pbn_dd_string("abc").is_none());
     }
 
+    #[test]
+    fn parses_pbn_par_simple() {
+        let par = parse_pbn_par(Some("EW 3N+2"), Some("EW 460"));
+        assert_eq!(par.len(), 1);
+        assert_eq!(par[0].score, -460);
+        assert_eq!(par[0].contract.level, 3);
+        assert_eq!(par[0].contract.strain, Strain::NoTrump);
+        assert_eq!(par[0].declarer, Direction::East);
+        assert_eq!(par[0].tricks_relative, Some(2));
+        assert_eq!(par[0].display(), "EW 3NT+2");
+        assert_eq!(par[0].score_display(), "EW 460");
+    }
+
+    #[test]
+    fn parses_pbn_par_tied() {
+        let par = parse_pbn_par(Some("N 4H=; S 4S="), Some("NS 420"));
+        assert_eq!(par.len(), 2);
+        assert_eq!(par[0].contract.strain, Strain::Hearts);
+        assert_eq!(par[0].declarer, Direction::North);
+        assert_eq!(par[1].contract.strain, Strain::Spades);
+        assert_eq!(par[1].declarer, Direction::South);
+        assert!(par.iter().all(|p| p.score == 420));
+        let (display, score) = render_par_display(&par);
+        assert_eq!(display.unwrap(), "NS 4H=; NS 4S=");
+        assert_eq!(score.unwrap(), "NS 420");
+    }
+
+    #[test]
+    fn parses_pbn_par_empty_inputs() {
+        assert!(parse_pbn_par(None, None).is_empty());
+        assert!(parse_pbn_par(Some(""), None).is_empty());
+    }
+
     /// dd_tricks() preserves the same lookup semantics as before the typed conversion.
     #[test]
     fn dd_tricks_lookup() {
@@ -507,8 +725,7 @@ mod tests {
             vulnerability: Vulnerability::None,
             deal: None,
             double_dummy: Some(dd),
-            par_contract: None,
-            optimum_score: None,
+            par: Vec::new(),
         };
         assert_eq!(board.dd_tricks(Direction::North, Strain::NoTrump), Some(10));
         assert_eq!(board.dd_tricks(Direction::East, Strain::Spades), Some(2));

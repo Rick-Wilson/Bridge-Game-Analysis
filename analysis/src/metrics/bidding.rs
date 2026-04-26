@@ -1,6 +1,5 @@
-use crate::data::{GameData, ParsedContract};
+use crate::data::{render_par_display, GameData, ParsedContract};
 use crate::identity::Partnership;
-use bridge_parsers::Strain;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -62,47 +61,6 @@ fn compute_field_contracts(data: &GameData) -> HashMap<u32, ParsedContract> {
         .collect()
 }
 
-/// Parse par contract strain from PBN par contract string
-/// Par contract strings can be like "NS 4S" or "EW 3NT" or "4S NS"
-fn parse_par_strain(par_str: &str) -> Option<Strain> {
-    let upper = par_str.to_uppercase();
-
-    // Look for strain indicators
-    if upper.contains("NT") || upper.contains("N ") {
-        return Some(Strain::NoTrump);
-    }
-
-    // Look for suit indicators with a level
-    for c in upper.chars() {
-        match c {
-            'S' => {
-                // Make sure it's not part of "NS" by checking context
-                if !upper.contains("NS") || upper.contains("S ") || upper.ends_with('S') {
-                    // Check if there's a number before it
-                    let s_pos = upper.find('S')?;
-                    if s_pos > 0 {
-                        let prev_char = upper.chars().nth(s_pos - 1)?;
-                        if prev_char.is_ascii_digit() {
-                            return Some(Strain::Spades);
-                        }
-                    }
-                }
-            }
-            'H' => return Some(Strain::Hearts),
-            'D' => return Some(Strain::Diamonds),
-            'C' => return Some(Strain::Clubs),
-            _ => {}
-        }
-    }
-
-    // Try parsing as a contract string
-    if let Some(contract) = ParsedContract::parse(&upper) {
-        return Some(contract.strain);
-    }
-
-    None
-}
-
 /// Analyze bidding performance for all partnerships
 pub fn analyze_bidding_performance(data: &GameData) -> Vec<BiddingPerformance> {
     let field_contracts = compute_field_contracts(data);
@@ -115,13 +73,17 @@ pub fn analyze_bidding_performance(data: &GameData) -> Vec<BiddingPerformance> {
             let partnership = result.declaring_partnership().clone();
             let board_data = data.boards.get(&result.board_number);
 
-            // Get par contract string
-            let par_contract = board_data.and_then(|b| b.par_contract.clone());
-
-            // Check if reached par strain
-            let reached_par_strain = par_contract.as_ref().and_then(|par| {
-                parse_par_strain(par).map(|par_strain| contract.strain == par_strain)
+            // Reached par strain: any par entry sharing the contract's strain.
+            let reached_par_strain = board_data.and_then(|b| {
+                if b.par.is_empty() {
+                    None
+                } else {
+                    Some(b.par.iter().any(|p| p.contract.strain == contract.strain))
+                }
             });
+
+            // Display string for the par contract (kept for downstream consumers).
+            let par_contract = board_data.and_then(|b| render_par_display(&b.par).0);
 
             // Get field contract for this board
             let field_contract = match field_contracts.get(&result.board_number) {

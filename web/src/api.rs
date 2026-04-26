@@ -375,12 +375,14 @@ pub async fn analyze_board(
                 bridge_club_analysis::Direction::East => "E",
                 bridge_club_analysis::Direction::West => "W",
             };
+            let (par_contract, optimum_score) =
+                bridge_club_analysis::render_par_display(&board_data.par);
             response.deal_info = Some(BoardDealInfo {
                 pbn: Some(deal.to_pbn(board_data.dealer)),
                 dealer: dealer_str.to_string(),
                 vulnerability: vul_str.to_string(),
-                par_contract: board_data.par_contract.clone(),
-                optimum_score: board_data.optimum_score.clone(),
+                par_contract,
+                optimum_score,
             });
         }
     }

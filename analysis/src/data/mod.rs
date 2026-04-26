@@ -4,4 +4,7 @@ mod types;
 
 pub use loader::{load_game_data, load_game_data_with_overrides};
 pub use schema::{parse_normalized, NormalizedGame, ParseError as SchemaParseError};
-pub use types::{BoardData, BoardResult, ContractResult, GameData, ParsedContract, SeatPlayers};
+pub use types::{
+    render_par_display, BoardData, BoardResult, ContractResult, GameData, ParContract,
+    ParsedContract, SeatPlayers,
+};
