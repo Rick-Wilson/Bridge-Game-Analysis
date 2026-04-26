@@ -226,6 +226,7 @@ name = "bridge-club-analysis"
 version = "0.1.0"
 dependencies = [
  "bridge-parsers",
+ "chrono",
  "dirs",
  "serde",
  "serde_json",

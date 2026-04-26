@@ -1,3 +1,4 @@
+pub mod adapters;
 mod builder;
 mod loader;
 pub mod schema;
