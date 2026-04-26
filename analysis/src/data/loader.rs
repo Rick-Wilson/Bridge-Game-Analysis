@@ -82,6 +82,13 @@ fn merge_data(
     // Each entry carries (name, ACBL number) for both players in the pair.
     let pair_lookup = build_pair_lookup(&bws_data);
 
+    // Track (board, section, table, round) keys we've already accepted so we
+    // can drop duplicate ReceivedData rows. BWS files sometimes carry the same
+    // hand twice (once with a contract, once with `result` only); we keep the
+    // first one and skip the rest.
+    let mut seen_keys: std::collections::HashSet<(i32, i32, i32, i32)> =
+        std::collections::HashSet::new();
+
     // Process each result
     for received in &bws_data.received_data {
         // Skip only truly empty results (no contract data at all)
@@ -157,9 +164,6 @@ fn merge_data(
             // Pass-out: score is 0, no declarer or contract
             let result = BoardResult {
                 board_number,
-                section: received.section,
-                table: received.table,
-                round: received.round,
                 ns_pair,
                 ew_pair,
                 declarer_direction: Direction::North, // placeholder - not meaningful
@@ -167,7 +171,6 @@ fn merge_data(
                 contract: None,
                 tricks_relative: None,
                 ns_score: 0,
-                lead_card: None,
             };
             game_data.results.push(result);
         } else {
@@ -199,9 +202,6 @@ fn merge_data(
 
             let result = BoardResult {
                 board_number,
-                section: received.section,
-                table: received.table,
-                round: received.round,
                 ns_pair,
                 ew_pair,
                 declarer_direction,
@@ -209,17 +209,16 @@ fn merge_data(
                 contract,
                 tricks_relative,
                 ns_score,
-                lead_card: received.lead_card.clone(),
             };
 
-            // Deduplicate: skip if we already have this board + table + round
-            let is_dup = game_data.results.iter().any(|existing| {
-                existing.board_number == board_number
-                    && existing.section == received.section
-                    && existing.table == received.table
-                    && existing.round == received.round
-            });
-            if !is_dup {
+            // Deduplicate: skip if we already have this board + section + table + round
+            let key = (
+                received.board,
+                received.section,
+                received.table,
+                received.round,
+            );
+            if seen_keys.insert(key) {
                 game_data.results.push(result);
             }
         }

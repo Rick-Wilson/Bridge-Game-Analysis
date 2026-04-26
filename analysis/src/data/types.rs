@@ -315,9 +315,6 @@ fn build_bidding_lin(dealer: Direction, cr: &ContractResult) -> String {
 #[derive(Debug, Clone)]
 pub struct BoardResult {
     pub board_number: u32,
-    pub section: i32,
-    pub table: i32,
-    pub round: i32,
     /// NS partnership
     pub ns_pair: Partnership,
     /// EW partnership
@@ -332,8 +329,6 @@ pub struct BoardResult {
     pub tricks_relative: Option<i32>,
     /// NS score (negative means EW scored)
     pub ns_score: i32,
-    /// Lead card if recorded
-    pub lead_card: Option<String>,
 }
 
 impl BoardResult {
