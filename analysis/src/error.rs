@@ -20,6 +20,9 @@ pub enum AnalysisError {
     #[error("Missing required data: {0}")]
     MissingData(String),
 
+    #[error("Invalid input data: {0}")]
+    InvalidData(String),
+
     #[error("Configuration error: {0}")]
     ConfigError(String),
 

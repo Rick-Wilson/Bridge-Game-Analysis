@@ -1,7 +1,9 @@
+mod builder;
 mod loader;
 pub mod schema;
 mod types;
 
+pub use builder::{build_sessions, SessionData};
 pub use loader::{load_game_data, load_game_data_with_overrides};
 pub use schema::{parse_normalized, NormalizedGame, ParseError as SchemaParseError};
 pub use types::{
