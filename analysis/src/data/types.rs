@@ -62,6 +62,37 @@ impl ParsedContract {
     }
 }
 
+/// Per-declarer × per-strain double-dummy trick counts.
+///
+/// Each entry says "if this declarer played in this strain, double-dummy
+/// optimal play makes N tricks". `None` for a strain means the source
+/// didn't disambiguate that count (e.g., ACBL Live collapses 0–6 tricks
+/// into a single bucket).
+pub type DoubleDummyTricks = HashMap<Direction, DdStrains>;
+
+/// Trick counts by strain for one declarer.
+#[derive(Debug, Clone, Default)]
+pub struct DdStrains {
+    pub clubs: Option<u8>,
+    pub diamonds: Option<u8>,
+    pub hearts: Option<u8>,
+    pub spades: Option<u8>,
+    pub no_trump: Option<u8>,
+}
+
+impl DdStrains {
+    /// Look up tricks for a strain.
+    pub fn get(&self, strain: Strain) -> Option<u8> {
+        match strain {
+            Strain::Clubs => self.clubs,
+            Strain::Diamonds => self.diamonds,
+            Strain::Hearts => self.hearts,
+            Strain::Spades => self.spades,
+            Strain::NoTrump => self.no_trump,
+        }
+    }
+}
+
 /// Complete data for a single board
 #[derive(Debug, Clone)]
 pub struct BoardData {
@@ -70,8 +101,8 @@ pub struct BoardData {
     pub vulnerability: Vulnerability,
     /// The deal (all four hands)
     pub deal: Option<Deal>,
-    /// Double dummy tricks string (if available from PBN)
-    pub double_dummy_tricks: Option<String>,
+    /// Double dummy tricks per declarer/strain (from PBN or schema input)
+    pub double_dummy: Option<DoubleDummyTricks>,
     /// Par contract string (if available from PBN)
     pub par_contract: Option<String>,
     /// Optimum score (if available from PBN)
@@ -88,48 +119,25 @@ impl BoardData {
             None
         };
 
+        let double_dummy = board
+            .double_dummy_tricks
+            .as_deref()
+            .and_then(parse_pbn_dd_string);
+
         Self {
             number: board.number.unwrap_or(0),
             dealer: board.dealer.unwrap_or(Direction::North),
             vulnerability: board.vulnerable,
             deal,
-            double_dummy_tricks: board.double_dummy_tricks.clone(),
+            double_dummy,
             par_contract: board.par_contract.clone(),
             optimum_score: board.optimum_score.clone(),
         }
     }
 
     /// Look up double-dummy tricks for a given declarer direction and strain.
-    ///
-    /// The DD tricks string is 20 hex chars: 4 directions (N,S,E,W) × 5 strains (NT,S,H,D,C).
-    /// Each hex char (0-9, a-d) represents tricks 0-13.
     pub fn dd_tricks(&self, declarer: Direction, strain: Strain) -> Option<u8> {
-        let dd = self.double_dummy_tricks.as_ref()?;
-        if dd.len() < 20 {
-            return None;
-        }
-
-        let dir_offset = match declarer {
-            Direction::North => 0,
-            Direction::South => 5,
-            Direction::East => 10,
-            Direction::West => 15,
-        };
-        let strain_offset = match strain {
-            Strain::NoTrump => 0,
-            Strain::Spades => 1,
-            Strain::Hearts => 2,
-            Strain::Diamonds => 3,
-            Strain::Clubs => 4,
-        };
-
-        let ch = dd.as_bytes().get(dir_offset + strain_offset)?;
-        match ch {
-            b'0'..=b'9' => Some(ch - b'0'),
-            b'a'..=b'd' => Some(ch - b'a' + 10),
-            b'A'..=b'D' => Some(ch - b'A' + 10),
-            _ => None,
-        }
+        self.double_dummy.as_ref()?.get(&declarer)?.get(strain)
     }
 
     /// Check if declarer is vulnerable
@@ -235,6 +243,40 @@ impl SeatPlayers {
             east: ew_pair.second_player().display_name(),
         }
     }
+}
+
+/// Parse a PBN `[DoubleDummyTricks "..."]` value into the typed map.
+///
+/// PBN format: 20 hex chars, layout NT,S,H,D,C × N,S,E,W. Each hex char
+/// (`0`–`9`, `a`–`d`) represents tricks 0–13. Returns `None` if the string
+/// is shorter than expected; otherwise produces a fully-populated map with
+/// every declarer/strain filled in.
+fn parse_pbn_dd_string(s: &str) -> Option<DoubleDummyTricks> {
+    let bytes = s.as_bytes();
+    if bytes.len() < 20 {
+        return None;
+    }
+    let parse_nibble = |idx: usize| -> Option<u8> {
+        match bytes.get(idx)? {
+            ch @ b'0'..=b'9' => Some(ch - b'0'),
+            ch @ b'a'..=b'd' => Some(ch - b'a' + 10),
+            ch @ b'A'..=b'D' => Some(ch - b'A' + 10),
+            _ => None,
+        }
+    };
+    let strains_for = |dir_offset: usize| DdStrains {
+        no_trump: parse_nibble(dir_offset),
+        spades: parse_nibble(dir_offset + 1),
+        hearts: parse_nibble(dir_offset + 2),
+        diamonds: parse_nibble(dir_offset + 3),
+        clubs: parse_nibble(dir_offset + 4),
+    };
+    let mut dd = DoubleDummyTricks::new();
+    dd.insert(Direction::North, strains_for(0));
+    dd.insert(Direction::South, strains_for(5));
+    dd.insert(Direction::East, strains_for(10));
+    dd.insert(Direction::West, strains_for(15));
+    Some(dd)
 }
 
 /// Format a hand in LIN format (SHDC order, suit letter then cards)
@@ -426,5 +468,50 @@ impl GameData {
 impl Default for GameData {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// PBN's 20-char DD layout is N,S,E,W × NT,S,H,D,C. The string
+    /// "abcd9 abcd9 12345 67890" (spaces only here for clarity) means:
+    ///   N: NT=10 S=11 H=12 D=13 C=9
+    ///   S: NT=10 S=11 H=12 D=13 C=9
+    ///   E: NT=1  S=2  H=3  D=4  C=5
+    ///   W: NT=6  S=7  H=8  D=9  C=0
+    #[test]
+    fn parses_pbn_dd_string() {
+        let dd = parse_pbn_dd_string("abcd9abcd9123456789a").expect("should parse");
+        // Last char is 'a' = 10 to keep all values legal (0..=13)
+        assert_eq!(dd.get(&Direction::North).unwrap().no_trump, Some(10));
+        assert_eq!(dd.get(&Direction::North).unwrap().clubs, Some(9));
+        assert_eq!(dd.get(&Direction::South).unwrap().diamonds, Some(13));
+        assert_eq!(dd.get(&Direction::East).unwrap().no_trump, Some(1));
+        assert_eq!(dd.get(&Direction::West).unwrap().clubs, Some(10));
+    }
+
+    #[test]
+    fn rejects_short_pbn_dd_string() {
+        assert!(parse_pbn_dd_string("abc").is_none());
+    }
+
+    /// dd_tricks() preserves the same lookup semantics as before the typed conversion.
+    #[test]
+    fn dd_tricks_lookup() {
+        let dd = parse_pbn_dd_string("abcd9abcd9123456789a").expect("should parse");
+        let board = BoardData {
+            number: 1,
+            dealer: Direction::North,
+            vulnerability: Vulnerability::None,
+            deal: None,
+            double_dummy: Some(dd),
+            par_contract: None,
+            optimum_score: None,
+        };
+        assert_eq!(board.dd_tricks(Direction::North, Strain::NoTrump), Some(10));
+        assert_eq!(board.dd_tricks(Direction::East, Strain::Spades), Some(2));
+        assert_eq!(board.dd_tricks(Direction::West, Strain::Clubs), Some(10));
     }
 }
