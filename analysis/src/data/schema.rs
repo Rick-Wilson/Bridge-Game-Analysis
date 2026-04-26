@@ -89,10 +89,8 @@ pub struct Board {
     #[serde(default)]
     pub double_dummy: Option<DoubleDummy>,
     /// Par contracts. Schema 1.0 supports an array to represent ties
-    /// (e.g., "N 4H= and S 4S= both score 420"). Older sources may emit
-    /// a single Par object instead of a one-element array; the
-    /// `deserialize_par` helper accepts either.
-    #[serde(default, deserialize_with = "deserialize_par")]
+    /// (e.g., "N 4H= and S 4S= both score 420"). Empty when no par data.
+    #[serde(default)]
     pub par: Vec<Par>,
     pub results: Vec<Result>,
     #[serde(default)]
@@ -208,28 +206,6 @@ pub struct Player {
     pub acbl_id: Option<String>,
     #[serde(default)]
     pub external_ids: HashMap<String, String>,
-}
-
-/// Accept `par` as either a single Par object or an array of them.
-/// The schema canonicalizes to `Vec<Par>` to handle ties; older or
-/// extension-emitted documents may still use the single-object form
-/// from the v1.0 doc example.
-fn deserialize_par<'de, D>(deserializer: D) -> std::result::Result<Vec<Par>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    #[serde(untagged)]
-    enum Either {
-        Many(Vec<Par>),
-        One(Par),
-    }
-    let either = Option::<Either>::deserialize(deserializer)?;
-    Ok(match either {
-        Some(Either::Many(v)) => v,
-        Some(Either::One(p)) => vec![p],
-        None => Vec::new(),
-    })
 }
 
 /// The current major version this analyzer accepts.
@@ -358,34 +334,6 @@ mod tests {
         assert_eq!(board.par[0].contract, "4H");
         let dd = board.double_dummy.as_ref().unwrap();
         assert_eq!(dd.north.as_ref().unwrap().spades, Some(5));
-    }
-
-    /// Single-object `par` (legacy v1.0 doc shape) parses as a 1-element Vec.
-    #[test]
-    fn par_accepts_single_object() {
-        let json = r#"{
-            "schema_version": "1.0",
-            "source": "test",
-            "fetched_at": "2026-04-26T18:30:00Z",
-            "tournaments": [{
-                "events": [{
-                    "sessions": [{
-                        "session_number": 1,
-                        "boards": [{
-                            "number": 1,
-                            "dealer": "N",
-                            "vulnerability": "None",
-                            "par": {"score": 460, "contract": "5NT", "declarer": "N"},
-                            "results": []
-                        }]
-                    }]
-                }]
-            }]
-        }"#;
-        let game = parse_normalized(json).expect("should parse");
-        let board = &game.tournaments[0].events[0].sessions[0].boards[0];
-        assert_eq!(board.par.len(), 1);
-        assert_eq!(board.par[0].contract, "5NT");
     }
 
     /// Bare `tricks` field can be omitted (null for score-only rows).
