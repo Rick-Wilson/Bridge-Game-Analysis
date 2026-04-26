@@ -249,6 +249,158 @@ pub async fn upload_files(
     }))
 }
 
+/// Accept a normalized JSON document (schema 1.x) from the browser
+/// extension, validate the schema version, and persist it as a session.
+/// Response mirrors `upload_files` so the frontend can take the same path.
+pub async fn upload_normalized(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    ConnectInfo(addr): ConnectInfo<SocketAddr>,
+    body: axum::body::Bytes,
+) -> Result<Json<UploadResponse>, (StatusCode, String)> {
+    let start = Instant::now();
+    let raw_ip = analytics::extract_ip(&headers, &addr);
+    let anon_ip = analytics::anonymize_ip(&raw_ip);
+    let (browser, device) = analytics::extract_user_agent_info(&headers);
+
+    let body_str = std::str::from_utf8(&body).map_err(|_| {
+        (
+            StatusCode::BAD_REQUEST,
+            "body is not valid UTF-8".to_string(),
+        )
+    })?;
+
+    // Parse + version-check first so we never write garbage to disk.
+    let normalized = bridge_club_analysis::parse_normalized(body_str).map_err(|e| {
+        let code = match e {
+            bridge_club_analysis::SchemaParseError::UnsupportedMajor { .. } => {
+                StatusCode::UNPROCESSABLE_ENTITY
+            }
+            _ => StatusCode::BAD_REQUEST,
+        };
+        (code, e.to_string())
+    })?;
+
+    let session_list = bridge_club_analysis::build_sessions(&normalized, None).map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("Failed to build sessions: {}", e),
+        )
+    })?;
+    if session_list.is_empty() {
+        return Err((
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "No sessions found in normalized document".to_string(),
+        ));
+    }
+
+    // Persist the document. Use a fresh UUID — JSON pushes don't append to
+    // an existing session.
+    let session_id = uuid::Uuid::new_v4().to_string();
+    let session_dir = state.upload_dir.join(&session_id);
+    std::fs::create_dir_all(&session_dir).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to create session dir: {}", e),
+        )
+    })?;
+    std::fs::write(session_dir.join("data.json"), body_str).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to persist data.json: {}", e),
+        )
+    })?;
+
+    // Build response identical to /api/upload (so frontend code branches once
+    // on entry, not on input source).
+    let game_data = session_list[0].data.clone();
+    let session_infos: Vec<SessionInfo> = session_list
+        .iter()
+        .map(|s| SessionInfo {
+            session_idx: s.session_idx,
+            label: s.label.clone(),
+            board_count: s.data.boards.len(),
+            result_count: s.data.results.len(),
+        })
+        .collect();
+
+    let mut players: Vec<String> = game_data
+        .players
+        .all_players()
+        .map(|p| p.display_name())
+        .collect();
+    players.sort();
+    players.dedup();
+
+    let mut player_acbl: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
+    let mut missing_players: Vec<MissingPlayerInfo> = Vec::new();
+    for p in game_data.players.all_players() {
+        let display_name = p.display_name();
+        let acbl = p.id.acbl_number.clone();
+        if display_name.starts_with("Player ") {
+            missing_players.push(MissingPlayerInfo {
+                display_name,
+                acbl_number: acbl,
+            });
+        } else if let Some(acbl) = acbl {
+            player_acbl.insert(display_name, acbl);
+        }
+    }
+    missing_players.sort_by(|a, b| a.display_name.cmp(&b.display_name));
+    missing_players.dedup_by(|a, b| a.display_name == b.display_name);
+    let missing_names = missing_players.len();
+
+    let mut pair_acbl: std::collections::HashMap<String, Vec<Option<String>>> =
+        std::collections::HashMap::new();
+    for ((_section, pair_num), (first_id, second_id)) in &game_data.pairs_by_number {
+        if *pair_num <= 0 {
+            continue;
+        }
+        pair_acbl.insert(
+            pair_num.to_string(),
+            vec![first_id.acbl_number.clone(), second_id.acbl_number.clone()],
+        );
+    }
+
+    let mut boards: Vec<u32> = game_data.results.iter().map(|r| r.board_number).collect();
+    boards.sort();
+    boards.dedup();
+    let result_count = game_data.results.len();
+
+    let duration = start.elapsed().as_millis() as u64;
+    let logger = AuditLogger::new(&state.log_dir);
+    logger.log_request(
+        &anon_ip,
+        "upload-normalized",
+        &format!(
+            "sessions={} boards={} results={}",
+            session_list.len(),
+            boards.len(),
+            result_count
+        ),
+        &browser,
+        &device,
+        duration,
+    );
+
+    Ok(Json(UploadResponse {
+        session_id,
+        event_name: game_data.event_name,
+        event_date: game_data.event_date,
+        players,
+        board_count: boards.len(),
+        boards,
+        result_count,
+        has_pbn: true, // Normalized documents always carry full board data
+        missing_names,
+        player_acbl,
+        missing_players,
+        pair_acbl,
+        sessions: session_infos,
+    }))
+}
+
 /// List all sessions in an upload (BWS+PBN: always 1; JSON ingest: many).
 pub async fn list_sessions(
     State(state): State<Arc<AppState>>,
