@@ -137,7 +137,27 @@ tr.clickable-row:hover td { background: #e0e7ff; }
 <header><div class="container"><h1>Club Game Analysis <span>by Bridge Classroom</span></h1></div></header>
 
 <div class="container">
-  <!-- Upload -->
+  <!-- Empty state for the /analyze route when no extension data is present -->
+  <div id="analyze-empty" class="upload-area hidden">
+    <p><strong>No game data was passed to this page.</strong></p>
+    <p style="font-size:0.85rem;color:var(--text-muted);margin-top:0.5rem;">
+      Open a tournament results page on ACBL Live and click "Analyze with Bridge Classroom" in the
+      <em>bridge-data-extension</em> browser extension. To analyze a club game from BWS+PBN files instead,
+      <a id="analyze-empty-link" href="/" style="color:var(--primary);">go to the file-upload page</a>.
+    </p>
+  </div>
+
+  <!-- Error state for the /analyze route when the handoff data is malformed -->
+  <div id="analyze-error" class="upload-area hidden" style="border-color:#c33;background:#fdf6f6;">
+    <p><strong>Couldn't read the game data passed to this page.</strong></p>
+    <p id="analyze-error-detail" style="font-size:0.85rem;color:var(--text-muted);margin-top:0.5rem;"></p>
+    <p style="font-size:0.85rem;color:var(--text-muted);margin-top:0.5rem;">
+      <a id="analyze-error-link" href="/" style="color:var(--primary);">Go to the file-upload page</a>
+      to analyze a club game instead.
+    </p>
+  </div>
+
+  <!-- Upload (only shown on the / route) -->
   <div id="upload-area" class="upload-area">
     <p>Upload your game files from ACBLscore/ACBLlive<br>
     <small>Select both the .BWS and .PBN files together (hold Cmd/Ctrl to multi-select)</small></p>
@@ -185,7 +205,10 @@ tr.clickable-row:hover td { background: #e0e7ff; }
 
   <!-- Event header -->
   <div id="event-header" class="event-header hidden">
-    <div class="event-info"><strong id="event-name"></strong><span id="event-date"></span></div>
+    <div class="event-info">
+      <strong id="event-name"></strong><span id="event-date"></span>
+      <select id="session-selector" class="hidden" style="margin-left:0.5rem;font-size:0.85rem;padding:0.25rem 0.5rem;"></select>
+    </div>
     <div style="display:flex;gap:0.375rem;align-items:center;">
       <button class="btn btn-sm btn-outline active" id="tab-players" onclick="switchView('players')">Players</button>
       <button class="btn btn-sm btn-outline" id="tab-boards" onclick="switchView('boards')">Boards</button>
@@ -266,6 +289,16 @@ let cachedPlayers = [];
 let cachedBoards = [];
 let currentBoard = null;
 let currentPlayerName = null; // Track for row highlighting in board view
+let currentSessionIdx = 0;     // 0 = first session; only matters when many
+let cachedSessions = [];       // [{ session_idx, label, board_count, result_count }]
+
+/** Build a query-string suffix that always passes session, plus session_idx
+ *  when more than one session is in the upload. */
+function sessionParams() {
+  let qs = `session=${sessionId}`;
+  if (cachedSessions.length > 1) qs += `&session_idx=${currentSessionIdx}`;
+  return qs;
+}
 
 // ==================== Upload ====================
 const fileInput = document.getElementById('file-input');
@@ -306,19 +339,69 @@ async function doUpload(files, addTo) {
     // If any placeholders can be resolved from localStorage, submit and refresh
     data = await autoFillFromStorage(data);
 
-    cachedPlayers = data.players;
-    cachedBoards = data.boards;
-    lastUpload = data;
-    document.getElementById('event-name').textContent = data.event_name || 'Game Results';
-    document.getElementById('event-date').textContent = data.event_date || '';
-    uploadArea.classList.add('hidden');
-    document.getElementById('download-help').classList.add('hidden');
-    document.getElementById('event-header').classList.remove('hidden');
-    document.getElementById('pbn-notice').classList.toggle('hidden', hasPbn || data.has_pbn);
-    showNamesNotice(data);
-    switchView('players');
+    applyUploadResponse(data, { hasPbn });
   } catch (e) { showError(e.message); }
   finally { showLoading(false); }
+}
+
+/** Wire an UploadResponse (from /api/upload or /api/upload-normalized)
+ *  into the UI: cache state, hide upload chrome, show event header,
+ *  build session selector, render the player view. */
+function applyUploadResponse(data, opts) {
+  opts = opts || {};
+  cachedPlayers = data.players;
+  cachedBoards = data.boards;
+  cachedSessions = data.sessions || [];
+  currentSessionIdx = 0;
+  lastUpload = data;
+  document.getElementById('event-name').textContent = data.event_name || 'Game Results';
+  document.getElementById('event-date').textContent = data.event_date || '';
+  uploadArea.classList.add('hidden');
+  document.getElementById('analyze-empty').classList.add('hidden');
+  document.getElementById('analyze-error').classList.add('hidden');
+  document.getElementById('download-help').classList.add('hidden');
+  document.getElementById('event-header').classList.remove('hidden');
+  // Hide the BWS-only PBN notice for normalized uploads — the schema
+  // always carries full board data.
+  const pbnHidden = opts.hasPbn || data.has_pbn || cachedSessions.length > 1;
+  document.getElementById('pbn-notice').classList.toggle('hidden', pbnHidden);
+  renderSessionSelector();
+  showNamesNotice(data);
+  switchView('players');
+}
+
+/** Populate the session-selector dropdown and wire its change handler.
+ *  Hidden when there's only one session. */
+function renderSessionSelector() {
+  const sel = document.getElementById('session-selector');
+  if (cachedSessions.length <= 1) {
+    sel.classList.add('hidden');
+    sel.innerHTML = '';
+    return;
+  }
+  sel.classList.remove('hidden');
+  sel.innerHTML = cachedSessions
+    .map(s => `<option value="${s.session_idx}">${s.label} — ${s.board_count} boards</option>`)
+    .join('');
+  sel.value = String(currentSessionIdx);
+  sel.onchange = async () => {
+    currentSessionIdx = parseInt(sel.value, 10) || 0;
+    // Refresh the cached lists from the new session and re-render.
+    try {
+      showLoading(true); showError('');
+      const [players, boards] = await Promise.all([
+        fetch(`${BASE}/api/players?${sessionParams()}`).then(r => r.json()),
+        fetch(`${BASE}/api/boards?${sessionParams()}`).then(r => r.json()),
+      ]);
+      cachedPlayers = players.players;
+      cachedBoards = boards.boards;
+      currentBoard = null;
+      currentPlayerName = null;
+      hideAll();
+      switchView('players');
+    } catch (e) { showError(e.message); }
+    finally { showLoading(false); }
+  };
 }
 
 // ==================== Name Storage / Overrides ====================
@@ -363,7 +446,7 @@ async function autoFillFromStorage(data) {
     body: JSON.stringify(toApply)
   });
   // Refetch upload-like info (we only need the updated player list + missing_players)
-  const refreshed = await fetch(`${BASE}/api/players?session=${sessionId}`).then(r => r.json());
+  const refreshed = await fetch(`${BASE}/api/players?${sessionParams()}`).then(r => r.json());
   // Rebuild a data object that looks like an upload response with updates
   data.players = refreshed.players;
   // Remove now-filled placeholders
@@ -439,7 +522,7 @@ document.getElementById('paste-names-apply').addEventListener('click', async () 
   saveStoredNames(stored);
 
   // Refetch player list and update state
-  const updated = await fetch(`${BASE}/api/players?session=${sessionId}`).then(r => r.json());
+  const updated = await fetch(`${BASE}/api/players?${sessionParams()}`).then(r => r.json());
   cachedPlayers = updated.players;
   // Remove now-filled placeholders from missing_players
   lastUpload.missing_players = lastUpload.missing_players.filter(mp => !overrides[mp.acbl_number]);
@@ -528,7 +611,7 @@ async function selectPlayer(btn, name) {
   currentPlayerName = name;
   showLoading(true); hideAll(); showError('');
   try {
-    const res = await fetch(`${BASE}/api/player?session=${sessionId}&name=${encodeURIComponent(name)}`);
+    const res = await fetch(`${BASE}/api/player?${sessionParams()}&name=${encodeURIComponent(name)}`);
     if (!res.ok) throw new Error(await res.text());
     renderPlayer(await res.json());
     // Hide the player grid once results show
@@ -601,7 +684,7 @@ async function selectBoard(btn, num, keepPlayer) {
   document.getElementById('player-results').classList.add('hidden');
   showLoading(true); showError('');
   try {
-    const res = await fetch(`${BASE}/api/board?session=${sessionId}&num=${num}`);
+    const res = await fetch(`${BASE}/api/board?${sessionParams()}&num=${num}`);
     if (!res.ok) throw new Error(await res.text());
     renderBoard(await res.json());
   } catch (e) { showError(e.message); }
@@ -1017,6 +1100,110 @@ function hideAll() {
   document.getElementById('viewer-row').classList.add('hidden');
   document.getElementById('board-viewer').src = '';
   currentBoardData = null;
+}
+
+// ==================== /analyze entry point ====================
+//
+// When opened at /analyze, the bridge-data-extension has already pushed
+// a normalized JSON document into sessionStorage under "pending-session"
+// and opened the tab. We pull it out (one-shot read), validate the
+// schema version, POST to /api/upload-normalized, and join the regular
+// post-upload UI flow. If no data is present we show the empty-state
+// card; if it can't be parsed or accepted, we show the error card.
+
+const PENDING_KEY = 'pending-session';
+const SUPPORTED_MAJOR = 1;
+
+function isAnalyzePath() {
+  // Strip the base path prefix so this works in subdirectory deployments.
+  const path = window.location.pathname;
+  const base = BASE || '';
+  const tail = base && path.startsWith(base) ? path.slice(base.length) : path;
+  return tail === '/analyze' || tail === '/analyze/';
+}
+
+function showAnalyzeEmpty() {
+  uploadArea.classList.add('hidden');
+  document.getElementById('download-help').classList.add('hidden');
+  const link = document.getElementById('analyze-empty-link');
+  if (link) link.href = (BASE || '') + '/';
+  document.getElementById('analyze-empty').classList.remove('hidden');
+}
+
+function showAnalyzeError(detail) {
+  uploadArea.classList.add('hidden');
+  document.getElementById('download-help').classList.add('hidden');
+  const link = document.getElementById('analyze-error-link');
+  if (link) link.href = (BASE || '') + '/';
+  document.getElementById('analyze-error-detail').textContent = detail || '';
+  document.getElementById('analyze-error').classList.remove('hidden');
+}
+
+async function bootstrapAnalyze() {
+  // One-shot read: clear immediately even on error so a refresh shows EMPTY
+  // rather than re-applying stale data.
+  let raw;
+  try {
+    raw = sessionStorage.getItem(PENDING_KEY);
+    sessionStorage.removeItem(PENDING_KEY);
+  } catch (e) {
+    showAnalyzeError('Could not read sessionStorage: ' + e.message);
+    return;
+  }
+  if (!raw) {
+    showAnalyzeEmpty();
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    showAnalyzeError('Game data was not valid JSON: ' + e.message);
+    return;
+  }
+
+  // Quick client-side version check so unsupported schemas don't even
+  // hit the server. The server enforces the same rule.
+  const ver = (parsed && parsed.schema_version) || '';
+  const major = parseInt(String(ver).split('.')[0], 10);
+  if (!Number.isFinite(major)) {
+    showAnalyzeError(`Game data is missing a valid schema_version (got "${ver}").`);
+    return;
+  }
+  if (major !== SUPPORTED_MAJOR) {
+    showAnalyzeError(
+      `Schema version ${ver} is not supported by this analyzer ` +
+      `(supports ${SUPPORTED_MAJOR}.x). Update Bridge Classroom to a newer build.`
+    );
+    return;
+  }
+
+  showLoading(true); showError('');
+  try {
+    const res = await fetch(`${BASE}/api/upload-normalized`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: raw,
+    });
+    if (!res.ok) {
+      const msg = await res.text();
+      showAnalyzeError(`Server rejected the data: ${msg}`);
+      return;
+    }
+    const data = await res.json();
+    sessionId = data.session_id;
+    mergeNamesToStorage(data.player_acbl);
+    applyUploadResponse(data, { hasPbn: true });
+  } catch (e) {
+    showAnalyzeError(`Network error: ${e.message}`);
+  } finally {
+    showLoading(false);
+  }
+}
+
+if (isAnalyzePath()) {
+  bootstrapAnalyze();
 }
 </script>
 </body>
