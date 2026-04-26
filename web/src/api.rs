@@ -114,14 +114,39 @@ pub async fn upload_files(
 
     let bws_path = bws_path.ok_or((StatusCode::BAD_REQUEST, "No BWS file uploaded".to_string()))?;
 
-    // Load and analyze
-    let game_data = bridge_club_analysis::load_game_data(&bws_path, pbn_path.as_deref(), None)
-        .map_err(|e| {
-            (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                format!("Failed to parse files: {}", e),
-            )
-        })?;
+    // Run the BWS+PBN adapter, then the builder. BWS+PBN always produces one
+    // session; we still keep the full list so the response shape matches
+    // multi-session uploads from the JSON ingest endpoint.
+    let normalized = bridge_club_analysis::data::adapters::pbn_bws::load_normalized(
+        &bws_path,
+        pbn_path.as_deref(),
+        None,
+    )
+    .map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("Failed to parse files: {}", e),
+        )
+    })?;
+    let session_list = bridge_club_analysis::build_sessions(&normalized, None).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Analysis error: {}", e),
+        )
+    })?;
+    let game_data = session_list.first().map(|s| s.data.clone()).ok_or((
+        StatusCode::INTERNAL_SERVER_ERROR,
+        "No sessions in upload".to_string(),
+    ))?;
+    let session_infos: Vec<SessionInfo> = session_list
+        .iter()
+        .map(|s| SessionInfo {
+            session_idx: s.session_idx,
+            label: s.label.clone(),
+            board_count: s.data.boards.len(),
+            result_count: s.data.results.len(),
+        })
+        .collect();
 
     // Extract player list (keep placeholder names so player grid isn't empty)
     let mut players: Vec<String> = game_data
@@ -220,7 +245,26 @@ pub async fn upload_files(
         player_acbl,
         missing_players,
         pair_acbl,
+        sessions: session_infos,
     }))
+}
+
+/// List all sessions in an upload (BWS+PBN: always 1; JSON ingest: many).
+pub async fn list_sessions(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<Json<Vec<SessionInfo>>, (StatusCode, String)> {
+    let sessions = load_sessions(&state, &params)?;
+    let infos = sessions
+        .into_iter()
+        .map(|s| SessionInfo {
+            session_idx: s.session_idx,
+            label: s.label,
+            board_count: s.data.boards.len(),
+            result_count: s.data.results.len(),
+        })
+        .collect();
+    Ok(Json(infos))
 }
 
 /// List players for a session.
@@ -548,11 +592,12 @@ pub async fn admin_logs(
 
 // ==================== Helpers ====================
 
-/// Load game data from a session's uploaded files.
-fn load_session_data(
+/// Load all sessions for an upload UUID. BWS+PBN uploads always produce
+/// one session; the JSON ingest endpoint can produce many.
+fn load_sessions(
     state: &AppState,
     params: &HashMap<String, String>,
-) -> Result<bridge_club_analysis::GameData, (StatusCode, String)> {
+) -> Result<Vec<bridge_club_analysis::SessionData>, (StatusCode, String)> {
     let session_id = params.get("session").ok_or((
         StatusCode::BAD_REQUEST,
         "Missing 'session' parameter".to_string(),
@@ -575,7 +620,41 @@ fn load_session_data(
         ));
     }
 
-    // Find BWS and PBN files in session directory
+    // Load name overrides if names.json exists in the session directory.
+    let names_path = session_dir.join("names.json");
+    let name_overrides: Option<HashMap<String, String>> = if names_path.exists() {
+        std::fs::read_to_string(&names_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+    } else {
+        None
+    };
+
+    // Prefer normalized JSON if present (extension uploads + future paths);
+    // fall back to BWS+PBN scan (legacy upload flow).
+    let data_json_path = session_dir.join("data.json");
+    if data_json_path.exists() {
+        let body = std::fs::read_to_string(&data_json_path).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to read data.json: {}", e),
+            )
+        })?;
+        let game = bridge_club_analysis::parse_normalized(&body).map_err(|e| {
+            (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                format!("Invalid normalized JSON: {}", e),
+            )
+        })?;
+        return bridge_club_analysis::build_sessions(&game, name_overrides.as_ref()).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Analysis error: {}", e),
+            )
+        });
+    }
+
+    // Find BWS and PBN files in session directory.
     let mut bws_path = None;
     let mut pbn_path = None;
     if let Ok(entries) = std::fs::read_dir(&session_dir) {
@@ -599,27 +678,61 @@ fn load_session_data(
         "BWS file not found in session".to_string(),
     ))?;
 
-    // Load name overrides if a names.json exists in the session directory
-    let names_path = session_dir.join("names.json");
-    let name_overrides: Option<HashMap<String, String>> = if names_path.exists() {
-        std::fs::read_to_string(&names_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-    } else {
-        None
-    };
-
-    bridge_club_analysis::load_game_data_with_overrides(
+    // Run the BWS+PBN adapter, then the builder; this also produces a
+    // SessionData list (single entry for BWS).
+    let normalized = bridge_club_analysis::data::adapters::pbn_bws::load_normalized(
         &bws_path,
         pbn_path.as_deref(),
         name_overrides.as_ref(),
     )
     .map_err(|e| {
         (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("Failed to parse BWS/PBN: {}", e),
+        )
+    })?;
+    bridge_club_analysis::build_sessions(&normalized, None).map_err(|e| {
+        (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Analysis error: {}", e),
         )
     })
+}
+
+/// Resolve which session the request targets (`session_idx` query param,
+/// default 0) and return owned SessionData. Errors if the index is out of range.
+fn pick_session(
+    mut sessions: Vec<bridge_club_analysis::SessionData>,
+    params: &HashMap<String, String>,
+) -> Result<bridge_club_analysis::SessionData, (StatusCode, String)> {
+    if sessions.is_empty() {
+        return Err((StatusCode::NOT_FOUND, "No sessions in upload".to_string()));
+    }
+    let idx: usize = params
+        .get("session_idx")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    if idx >= sessions.len() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!(
+                "Session index {} out of range (have {})",
+                idx,
+                sessions.len()
+            ),
+        ));
+    }
+    Ok(sessions.swap_remove(idx))
+}
+
+/// Convenience: load sessions and pick the targeted one in one call.
+fn load_session_data(
+    state: &AppState,
+    params: &HashMap<String, String>,
+) -> Result<bridge_club_analysis::GameData, (StatusCode, String)> {
+    let sessions = load_sessions(state, params)?;
+    let session = pick_session(sessions, params)?;
+    Ok(session.data)
 }
 
 /// Check admin access via admin key or localhost.

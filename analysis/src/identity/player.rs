@@ -144,7 +144,7 @@ impl Player {
 }
 
 /// Registry of all players in a game
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct PlayerRegistry {
     players: HashMap<PlayerId, Player>,
 }

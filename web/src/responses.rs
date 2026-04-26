@@ -37,6 +37,19 @@ pub struct UploadResponse {
     /// in display order (N-S or W-E). Only includes pairs where at least
     /// one seat has a placeholder name.
     pub pair_acbl: std::collections::HashMap<String, Vec<Option<String>>>,
+    /// All sessions in the upload (always 1 for BWS+PBN, may be many for
+    /// extension-pushed JSON). Index in this list matches the `session_idx`
+    /// URL parameter on subsequent /api/player and /api/board calls.
+    pub sessions: Vec<SessionInfo>,
+}
+
+/// Session metadata for the session selector in the UI.
+#[derive(Serialize)]
+pub struct SessionInfo {
+    pub session_idx: u32,
+    pub label: String,
+    pub board_count: usize,
+    pub result_count: usize,
 }
 
 #[derive(Serialize)]

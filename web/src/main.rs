@@ -78,6 +78,7 @@ async fn main() {
     // API routes
     let api_routes = Router::new()
         .route("/upload", post(api::upload_files))
+        .route("/sessions", get(api::list_sessions))
         .route("/players", get(api::list_players))
         .route("/boards", get(api::list_boards))
         .route("/player", get(api::analyze_player))

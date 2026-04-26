@@ -585,7 +585,7 @@ impl BoardResult {
 }
 
 /// Complete merged data for a game session
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct GameData {
     /// Event/session name (e.g., "Monday Morning Pairs")
     pub event_name: Option<String>,
