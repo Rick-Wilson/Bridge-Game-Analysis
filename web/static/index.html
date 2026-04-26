@@ -1140,17 +1140,43 @@ function showAnalyzeError(detail) {
 }
 
 async function bootstrapAnalyze() {
-  // One-shot read: clear immediately even on error so a refresh shows EMPTY
-  // rather than re-applying stale data.
-  let raw;
+  // The extension's content script and our page script can fire in either
+  // order depending on the extension's run_at. Poll sessionStorage for up
+  // to ~2s before giving up. We also listen for a custom event the
+  // extension can dispatch ("bridge-classroom-handoff") to short-circuit
+  // the wait when it finishes early.
+  showLoading(true);
+  let raw = null;
+  let earlyResolve;
+  const earlyPromise = new Promise(r => { earlyResolve = r; });
+  const onHandoff = () => earlyResolve();
+  window.addEventListener('bridge-classroom-handoff', onHandoff, { once: true });
+
   try {
-    raw = sessionStorage.getItem(PENDING_KEY);
-    sessionStorage.removeItem(PENDING_KEY);
+    for (let attempt = 0; attempt < 40; attempt++) { // 40 × 50ms = 2s
+      try { raw = sessionStorage.getItem(PENDING_KEY); } catch (e) {}
+      if (raw) break;
+      await Promise.race([
+        new Promise(r => setTimeout(r, 50)),
+        earlyPromise,
+      ]);
+    }
+  } finally {
+    window.removeEventListener('bridge-classroom-handoff', onHandoff);
+  }
+
+  // One-shot consume: remove immediately even on error so a refresh shows
+  // EMPTY rather than re-applying stale data.
+  try {
+    if (raw) sessionStorage.removeItem(PENDING_KEY);
   } catch (e) {
+    showLoading(false);
     showAnalyzeError('Could not read sessionStorage: ' + e.message);
     return;
   }
+
   if (!raw) {
+    showLoading(false);
     showAnalyzeEmpty();
     return;
   }
