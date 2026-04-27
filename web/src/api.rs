@@ -289,6 +289,10 @@ pub async fn upload_normalized(
     // constructed auction (passes-to-declarer, contract bid, closing
     // passes / X / XX).
     let mut normalized = normalized;
+    // Derive missing trick counts from score before building URLs (so
+    // downstream consumers that read the schema have trick-aware analysis
+    // — DVF, "below DD", "went down", etc.).
+    bridge_club_analysis::enrich_tricks(&mut normalized);
     bridge_club_analysis::enrich_handviewer_urls(&mut normalized);
     let body_str = serde_json::to_string(&normalized).map_err(|e| {
         (

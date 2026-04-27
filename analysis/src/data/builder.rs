@@ -411,6 +411,62 @@ fn title_case(name: &str) -> String {
         .join(" ")
 }
 
+/// Walk every result and fill in `tricks` from `score` when missing. ACBL
+/// Live tournament results always emit `tricks: null` (the page shows the
+/// score, not the trick count); without this pass, downstream consumers
+/// that read the schema directly (engine=js, /api/normalized streaming)
+/// can't compute trick-aware analysis like declarer-vs-field, "held below
+/// DD", or "went down" detection. The Rust analysis path derives the same
+/// value via builder::build_session_data, but only inside its own GameData.
+///
+/// Derivation is deterministic for non-doubled contracts under standard
+/// scoring; falls back to leaving tricks null if no value in the legal
+/// range matches the score (rare — typically only ambiguous for some
+/// doubled / non-vul partial-score combinations).
+pub fn enrich_tricks(game: &mut NormalizedGame) {
+    for tournament in &mut game.tournaments {
+        for event in &mut tournament.events {
+            for session in &mut event.sessions {
+                for board in &mut session.boards {
+                    let vulnerability = Vulnerability::from_pbn(&board.vulnerability)
+                        .unwrap_or(Vulnerability::None);
+                    for result in &mut board.results {
+                        if result.tricks.is_some() {
+                            continue;
+                        }
+                        let contract = match result
+                            .contract
+                            .as_deref()
+                            .filter(|c| !c.is_empty() && *c != "PASS")
+                            .and_then(ParsedContract::parse)
+                        {
+                            Some(c) => c,
+                            None => continue,
+                        };
+                        let declarer = match result.declarer.as_deref().and_then(parse_direction) {
+                            Some(d) => d,
+                            None => continue,
+                        };
+                        let score = match result.score {
+                            Some(s) => s,
+                            None => continue,
+                        };
+                        let vulnerable = vulnerability.is_vulnerable(declarer);
+                        if let Some(rel) =
+                            derive_tricks_relative(&contract, declarer, score, vulnerable)
+                        {
+                            let tricks = contract.level as i32 + 6 + rel;
+                            if (0..=13).contains(&tricks) {
+                                result.tricks = Some(tricks as u8);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 /// Walk every result in a NormalizedGame and replace `handviewer_url` with
 /// a canonical BBO LIN URL built from the deal, contract, declarer, and
 /// player names. The canonical URL includes a constructed auction
