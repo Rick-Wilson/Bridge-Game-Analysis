@@ -1493,10 +1493,13 @@ function compareMatchpointsForBoard(serverResp, normalized, sessionIdx, boardNum
   }
   for (const row of serverResp.results) {
     // Server returns rows ordered by NS matchpoint % desc; we identify the
-    // matching schema row by NS player names.
+    // matching schema row by NS player names. The server passes names
+    // through display_name() (lowercase + first-letter-cap), so we have to
+    // apply the same transform to the schema side or "Rosemarie LaFrancesca"
+    // (raw schema) won't equal "Rosemarie Lafrancesca" (server response).
     const r = board.results.find(r =>
-      r.ns_pair.players[0]?.name === row.ns_player1 &&
-      r.ns_pair.players[1]?.name === row.ns_player2
+      displayName(r.ns_pair.players[0]?.name) === row.ns_player1 &&
+      displayName(r.ns_pair.players[1]?.name) === row.ns_player2
     );
     if (!r) { diffs.push({ kind: 'no-result-row', ns: row.ns_pair }); continue; }
     const jsNs = calculateMatchpointPct(r, board.results, 'NS');
