@@ -456,6 +456,63 @@ function declarerVsField(result, fieldAverages) {
   return tricks - stats.avg;
 }
 
+// ---- Field contract ----
+//
+// "Field contract" = the contract played by the most tables on a board,
+// keyed by canonical full string (level + strain + double). Mirrors the
+// `field_contract` block in compute_board_context: count occurrences,
+// pick the max. Ties are broken arbitrarily (Rust's max_by_key on a
+// HashMap iter is non-deterministic), so the parity check has to
+// tolerate alternative choices that share the same count.
+
+/** Tally counts of canonical contract strings for all results on a board. */
+function fieldContractCounts(allResults) {
+  const counts = new Map();
+  for (const r of allResults) {
+    if (!r.contract || r.contract === 'PASS') continue;
+    counts.set(r.contract, (counts.get(r.contract) || 0) + 1);
+  }
+  return counts;
+}
+
+/** Return the canonical string of the most-common contract on the board, or
+ *  null if there are no contracts. On ties, returns one of the tied entries. */
+function fieldContract(allResults) {
+  const counts = fieldContractCounts(allResults);
+  if (counts.size === 0) return null;
+  let best = null, bestCount = 0;
+  for (const [contract, count] of counts) {
+    if (count > bestCount) { best = contract; bestCount = count; }
+  }
+  return best;
+}
+
+/** True when the actual contract matches the field on level + strain
+ *  (ignoring doubled status). Mirrors the matched_field check in
+ *  analyze_direction(). Returns false when either side is null. */
+function matchedFieldContract(actualContract, fieldContractStr) {
+  if (!actualContract || actualContract === 'PASS' || !fieldContractStr) return false;
+  const aLvl = actualContract[0], aStr = extractStrain(actualContract);
+  const fLvl = fieldContractStr[0], fStr = extractStrain(fieldContractStr);
+  return aLvl === fLvl && aStr === fStr;
+}
+
+/** True when the actual contract shares the field contract's strain
+ *  (ignoring level + doubled). Same null-handling as matchedFieldContract. */
+function sameStrainAsField(actualContract, fieldContractStr) {
+  if (!actualContract || actualContract === 'PASS' || !fieldContractStr) return false;
+  return extractStrain(actualContract) === extractStrain(fieldContractStr);
+}
+
+/** Comparison helper that treats any field contract sharing the max count
+ *  as parity-equivalent. Server's HashMap iteration order is randomized,
+ *  so on ties we'd get spurious mismatches without this. */
+function fieldContractEquivalent(serverField, jsField, counts) {
+  if (serverField === jsField) return true;
+  if (!serverField || !jsField) return false;
+  return counts.get(serverField) === counts.get(jsField);
+}
+
 // ---- Parity (shadow-mode) checks ----
 //
 // Each "compare<X>" function takes the server response and the same input the
@@ -498,6 +555,31 @@ function compareMatchpointsForPlayer(serverResp, normalized, sessionIdx, playerN
         js: jsDvF,
       });
     }
+    // Field contract: tolerate ties (server's HashMap iteration is
+    // non-deterministic when multiple contracts share the max count).
+    const counts = fieldContractCounts(board.results);
+    const jsField = fieldContract(board.results);
+    if (!fieldContractEquivalent(br.field_contract, jsField, counts)) {
+      diffs.push({
+        kind: 'field-contract-mismatch',
+        board: br.board_number,
+        server: br.field_contract,
+        js: jsField,
+      });
+    }
+    if (matchedFieldContract(myResult.contract, jsField) !== br.matched_field_contract) {
+      // Only flag if the field contracts agree (otherwise it's a tie-break
+      // disagreement, not a real bug).
+      if (fieldContractEquivalent(br.field_contract, jsField, counts) &&
+          br.field_contract === jsField) {
+        diffs.push({
+          kind: 'matched-field-mismatch',
+          board: br.board_number,
+          server: br.matched_field_contract,
+          js: matchedFieldContract(myResult.contract, jsField),
+        });
+      }
+    }
   }
   return diffs;
 }
@@ -517,6 +599,17 @@ function compareMatchpointsForBoard(serverResp, normalized, sessionIdx, boardNum
   const board = session.boards.find(b => b.number === boardNum);
   if (!board) return [{ kind: 'missing-board', board: boardNum }];
   const diffs = [];
+  // Top-level field_contract on the BoardAnalysis response.
+  const counts = fieldContractCounts(board.results);
+  const jsField = fieldContract(board.results);
+  if (!fieldContractEquivalent(serverResp.field_contract, jsField, counts)) {
+    diffs.push({
+      kind: 'field-contract-mismatch',
+      board: boardNum,
+      server: serverResp.field_contract,
+      js: jsField,
+    });
+  }
   for (const row of serverResp.results) {
     // Server returns rows ordered by NS matchpoint % desc; we identify the
     // matching schema row by NS player names.
@@ -552,6 +645,20 @@ function compareMatchpointsForBoard(serverResp, normalized, sessionIdx, boardNum
     if (!nullableNumberEqual(jsDvF, row.ew_analysis.declarer_vs_field, 0.001)) {
       diffs.push({ kind: 'dvf-mismatch', dir: 'EW', ns_pair: row.ns_pair,
         server: row.ew_analysis.declarer_vs_field, js: jsDvF });
+    }
+    // matched_field_contract on each direction's analysis. Only check when
+    // server and JS picked the SAME contract as the field — otherwise we'd
+    // be comparing different sides of a tie.
+    if (serverResp.field_contract === jsField) {
+      const jsMatched = matchedFieldContract(r.contract, jsField);
+      if (jsMatched !== row.ns_analysis.matched_field_contract) {
+        diffs.push({ kind: 'matched-field-mismatch', dir: 'NS', ns_pair: row.ns_pair,
+          server: row.ns_analysis.matched_field_contract, js: jsMatched });
+      }
+      if (jsMatched !== row.ew_analysis.matched_field_contract) {
+        diffs.push({ kind: 'matched-field-mismatch', dir: 'EW', ns_pair: row.ns_pair,
+          server: row.ew_analysis.matched_field_contract, js: jsMatched });
+      }
     }
   }
   return diffs;
