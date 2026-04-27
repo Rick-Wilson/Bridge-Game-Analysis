@@ -394,6 +394,68 @@ function playerDirectionInResult(result, playerName) {
   return null;
 }
 
+// ---- Contract / result helpers ----
+//
+// Schema's `contract` is the canonical string "{level}{strain}{double?}" —
+// "3NT", "4SX", "6HXX", or "PASS"/null for passed-out / no-result rows.
+
+/** Extract the strain ("C"/"D"/"H"/"S"/"NT") from a canonical contract.
+ *  Returns null for PASS / null. Mirrors strain_key() in player.rs. */
+function extractStrain(contract) {
+  if (!contract || contract === 'PASS') return null;
+  // contract[0] is level (1-7); contract[1] starts the strain.
+  // 'N' implies "NT"; everything else is a single suit letter.
+  return contract[1] === 'N' ? 'NT' : (contract[1] || null);
+}
+
+/** Tricks the declarer took on this result, or null if the row has no
+ *  result (PASS, sit-out, etc.). Matches BoardResult::tricks_made(): the
+ *  schema already carries absolute tricks, so this is just a passthrough
+ *  with a contract-presence guard. */
+function tricksMade(result) {
+  if (result.contract == null || result.contract === 'PASS') return null;
+  if (result.tricks == null) return null;
+  return result.tricks;
+}
+
+// ---- Field-level board context ----
+//
+// Pre-compute per-board state needed to evaluate any one result on the same
+// board. Mirrors the shape of analysis::metrics::player::BoardContext but
+// only contains pieces that have been ported so far.
+
+/** Build a `strain → { avg, count }` map of tricks taken across all results
+ *  on a board, grouped by the contract's strain. Used as the denominator in
+ *  declarer-vs-field comparisons. */
+function fieldTrickAverages(allResults) {
+  const grouped = new Map(); // strain -> array of tricks
+  for (const r of allResults) {
+    const strain = extractStrain(r.contract);
+    const tricks = tricksMade(r);
+    if (strain == null || tricks == null) continue;
+    if (!grouped.has(strain)) grouped.set(strain, []);
+    grouped.get(strain).push(tricks);
+  }
+  const out = new Map();
+  for (const [strain, arr] of grouped) {
+    const sum = arr.reduce((a, b) => a + b, 0);
+    out.set(strain, { avg: sum / arr.length, count: arr.length });
+  }
+  return out;
+}
+
+/** Trick difference between this declarer's actual tricks and the strain's
+ *  field average. Returns null when fewer than 2 tables played the strain
+ *  (no meaningful average), matching the Rust check `if count > 1`. */
+function declarerVsField(result, fieldAverages) {
+  const strain = extractStrain(result.contract);
+  const tricks = tricksMade(result);
+  if (strain == null || tricks == null) return null;
+  const stats = fieldAverages.get(strain);
+  if (!stats || stats.count <= 1) return null;
+  return tricks - stats.avg;
+}
+
 // ---- Parity (shadow-mode) checks ----
 //
 // Each "compare<X>" function takes the server response and the same input the
@@ -401,8 +463,8 @@ function playerDirectionInResult(result, playerName) {
 // with absolute diff > epsilon. Returns [] when everything matches.
 const PARITY_EPSILON = 0.05; // matchpoint_pct rounded to 2dp on the wire
 
-/** Compare server's per-board matchpoint_pct values for one player against
- *  the JS port's calculation. */
+/** Compare server's per-board matchpoint_pct + declarer_vs_field for one
+ *  player against the JS port's calculation. */
 function compareMatchpointsForPlayer(serverResp, normalized, sessionIdx, playerName) {
   const session = pickSession(normalized, sessionIdx);
   if (!session) return [{ kind: 'no-session', sessionIdx }];
@@ -423,8 +485,28 @@ function compareMatchpointsForPlayer(serverResp, normalized, sessionIdx, playerN
         delta: jsMp - br.matchpoint_pct,
       });
     }
+    // declarer_vs_field: server reports it on every PlayerBoardResult; JS
+    // re-derives from the field averages of the same board.
+    const avgs = fieldTrickAverages(board.results);
+    const jsDvF = declarerVsField(myResult, avgs);
+    if (!nullableNumberEqual(jsDvF, br.declarer_vs_field, 0.001)) {
+      diffs.push({
+        kind: 'dvf-mismatch',
+        board: br.board_number,
+        dir: br.direction,
+        server: br.declarer_vs_field,
+        js: jsDvF,
+      });
+    }
   }
   return diffs;
+}
+
+/** Compare two nullable numbers, treating both-null as equal. */
+function nullableNumberEqual(a, b, eps) {
+  if (a == null && b == null) return true;
+  if (a == null || b == null) return false;
+  return Math.abs(a - b) <= eps;
 }
 
 /** Compare server's per-table matchpoint_pct (NS + EW analysis) for one
@@ -458,6 +540,18 @@ function compareMatchpointsForBoard(serverResp, normalized, sessionIdx, boardNum
         server: row.ew_analysis.matchpoint_pct, js: jsEw,
         delta: jsEw - row.ew_analysis.matchpoint_pct,
       });
+    }
+    // declarer_vs_field is the same value from both NS and EW perspectives
+    // (it's about the declarer, not the perspective). Compare each side.
+    const avgs = fieldTrickAverages(board.results);
+    const jsDvF = declarerVsField(r, avgs);
+    if (!nullableNumberEqual(jsDvF, row.ns_analysis.declarer_vs_field, 0.001)) {
+      diffs.push({ kind: 'dvf-mismatch', dir: 'NS', ns_pair: row.ns_pair,
+        server: row.ns_analysis.declarer_vs_field, js: jsDvF });
+    }
+    if (!nullableNumberEqual(jsDvF, row.ew_analysis.declarer_vs_field, 0.001)) {
+      diffs.push({ kind: 'dvf-mismatch', dir: 'EW', ns_pair: row.ns_pair,
+        server: row.ew_analysis.declarer_vs_field, js: jsDvF });
     }
   }
   return diffs;
