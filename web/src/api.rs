@@ -696,6 +696,105 @@ pub async fn update_names(
     }))
 }
 
+/// Return the full normalized JSON document for a session as raw bytes.
+///
+/// For data.json sessions (extension JSON pushes), streams the file directly.
+/// For BWS+PBN sessions, runs the adapter on demand and serializes the result.
+/// Used by the JS port's parity-test harness — the SPA fetches this once
+/// after upload, then runs client-side analysis against it and compares to
+/// the server's per-player / per-board responses.
+pub async fn get_normalized(
+    State(state): State<Arc<AppState>>,
+    Query(params): Query<HashMap<String, String>>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    let session_id = params.get("session").ok_or((
+        StatusCode::BAD_REQUEST,
+        "Missing 'session' parameter".to_string(),
+    ))?;
+    if session_id.len() != 36
+        || !session_id
+            .chars()
+            .all(|c| c.is_ascii_hexdigit() || c == '-')
+    {
+        return Err((StatusCode::BAD_REQUEST, "Invalid session ID".to_string()));
+    }
+    let session_dir = state.upload_dir.join(session_id);
+    if !session_dir.exists() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            "Session not found or expired".to_string(),
+        ));
+    }
+
+    // Prefer the original JSON when it was uploaded directly (extension path) —
+    // it preserves any source-side fields the analyzer doesn't model.
+    let data_json_path = session_dir.join("data.json");
+    if data_json_path.exists() {
+        let body = std::fs::read_to_string(&data_json_path).map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("Failed to read data.json: {}", e),
+            )
+        })?;
+        return Ok((
+            [(axum::http::header::CONTENT_TYPE, "application/json")],
+            body,
+        ));
+    }
+
+    // BWS+PBN path: run the adapter, serialize.
+    let mut bws_path = None;
+    let mut pbn_path = None;
+    if let Ok(entries) = std::fs::read_dir(&session_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
+            match ext.as_str() {
+                "bws" => bws_path = Some(path),
+                "pbn" => pbn_path = Some(path),
+                _ => {}
+            }
+        }
+    }
+    let bws_path = bws_path.ok_or((
+        StatusCode::NOT_FOUND,
+        "BWS file not found in session".to_string(),
+    ))?;
+    let names_path = session_dir.join("names.json");
+    let name_overrides: Option<HashMap<String, String>> = if names_path.exists() {
+        std::fs::read_to_string(&names_path)
+            .ok()
+            .and_then(|s| serde_json::from_str(&s).ok())
+    } else {
+        None
+    };
+    let normalized = bridge_club_analysis::data::adapters::pbn_bws::load_normalized(
+        &bws_path,
+        pbn_path.as_deref(),
+        name_overrides.as_ref(),
+    )
+    .map_err(|e| {
+        (
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("Failed to parse BWS/PBN: {}", e),
+        )
+    })?;
+    let body = serde_json::to_string(&normalized).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to serialize: {}", e),
+        )
+    })?;
+    Ok((
+        [(axum::http::header::CONTENT_TYPE, "application/json")],
+        body,
+    ))
+}
+
 // ==================== Admin ====================
 
 /// Admin dashboard page.

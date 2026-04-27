@@ -80,6 +80,7 @@ async fn main() {
         .route("/upload", post(api::upload_files))
         .route("/upload-normalized", post(api::upload_normalized))
         .route("/sessions", get(api::list_sessions))
+        .route("/normalized", get(api::get_normalized))
         .route("/players", get(api::list_players))
         .route("/boards", get(api::list_boards))
         .route("/player", get(api::analyze_player))

@@ -292,6 +292,68 @@ let currentPlayerName = null; // Track for row highlighting in board view
 let currentSessionIdx = 0;     // 0 = first session; only matters when many
 let cachedSessions = [];       // [{ session_idx, label, board_count, result_count }]
 
+// ==================== JS Analysis Engine — Phase 0 (parity scaffold) ====================
+//
+// Goal: progressively port the Rust analysis crate (analysis/src/{data,metrics})
+// to JS so the SPA can run analysis client-side. Plan is to land it in slices:
+// each slice ports one piece (matchpoint calc, field contract, board context,
+// cause analysis, ...) and adds a parity check that cross-validates against
+// the server's response on the same input.
+//
+// Engine selection via `?engine=` URL param (debug-only, not user-facing yet):
+//   server  — only the Rust analyzer runs (default; current behavior)
+//   shadow  — server runs, JS runs in shadow, console diffs anything mismatched
+//   js      — only the JS analyzer runs (will fail until the port is complete)
+//
+// `cachedNormalized` holds the full normalized JSON document for the current
+// upload, fetched once on upload via /api/normalized. The JS analyzer reads
+// from it directly (it's the same shape the Rust schema deserializes from).
+const ANALYSIS_ENGINE = new URLSearchParams(location.search).get('engine') || 'server';
+let cachedNormalized = null;
+
+// Bridge-domain string constants. Keep these as plain strings (matching the
+// schema's wire shape) rather than wrapping them in objects — saves us a
+// translation layer everywhere a Direction or Strain shows up in the JSON.
+const DIRECTIONS = ['N', 'E', 'S', 'W'];
+const STRAINS = ['C', 'D', 'H', 'S', 'NT'];
+const SUITS = ['S', 'H', 'D', 'C']; // hand display order (high → low)
+
+/** Normalize a player name for identity comparison. Mirrors the Rust
+ *  identity::normalize_name — used as the dedup key in PlayerRegistry. */
+function normalizeName(name) {
+  return (name || '').trim().toLowerCase();
+}
+
+/** Identity key used to deduplicate players across the document. ACBL number
+ *  trumps name when present (matches PlayerId::with_acbl_number). */
+function playerKey(player) {
+  if (player.acbl_id) return `acbl:${player.acbl_id}`;
+  return `name:${normalizeName(player.name)}`;
+}
+
+/** Fetch the full normalized JSON for the current session. Cached after the
+ *  first call so repeated player/board navigations are free. */
+async function loadNormalized() {
+  if (cachedNormalized) return cachedNormalized;
+  if (!sessionId) throw new Error('no active session');
+  cachedNormalized = await getJSON(`${BASE}/api/normalized?session=${sessionId}`);
+  return cachedNormalized;
+}
+
+/** Hook for the parity / JS-only paths. Currently unused — slices to come will
+ *  call this from selectPlayer / selectBoard before falling through to the
+ *  server response. Returning `null` signals "not implemented yet, fall through
+ *  to server". The shadow-mode entry point will diff against the server when
+ *  this returns a real result. */
+async function jsAnalyzePlayer(_game, _sessionIdx, _playerName) {
+  return null; // Phase 0: no JS analysis implemented yet.
+}
+async function jsAnalyzeBoard(_game, _sessionIdx, _boardNum) {
+  return null; // Phase 0: no JS analysis implemented yet.
+}
+
+// =========================================================================
+
 /** Build a query-string suffix that always passes session, plus session_idx
  *  when more than one session is in the upload. */
 function sessionParams() {
@@ -312,6 +374,7 @@ function resetSessionState() {
   currentSessionIdx = 0;
   currentBoard = null;
   currentPlayerName = null;
+  cachedNormalized = null;
 }
 
 /** Fetch + JSON wrapper that throws the response body text (not a JSON
