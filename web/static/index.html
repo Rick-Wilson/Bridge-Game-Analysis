@@ -2172,7 +2172,7 @@ function renderBoard(data) {
     // Render par, fetch DD and BBA data
     if (data.deal_info) {
       renderPar(data.deal_info);
-      fetchDD(data.deal_info, data.results[activeRowIdx]);
+      fetchDD(data.deal_info, data.results[activeRowIdx], data.board_number);
       fetchBBA(data.deal_info);
     } else {
       document.getElementById('par-section').classList.add('hidden');
@@ -2237,10 +2237,57 @@ function setViewerRow(idx) {
 }
 
 // ==================== DD Table ====================
-async function fetchDD(dealInfo, activeResult) {
+
+/** Encode the schema's structured double_dummy ({N: {C,D,H,S,NT}, ...})
+ *  into the 20-char hex string the BSOL endpoint returns and renderDDTable
+ *  consumes (layout: 4 declarers N/S/E/W × 5 strains NT/S/H/D/C, hex digits
+ *  with 'a'-'d' for 10-13). Returns null when the source had no DD data
+ *  for any declarer.  */
+function buildDDStringFromSchema(boardDD) {
+  if (!boardDD) return null;
+  const declarers = ['N', 'S', 'E', 'W'];
+  const strains = ['NT', 'S', 'H', 'D', 'C']; // BSOL order
+  const toHex = n => n == null ? '0' : (n < 10 ? String(n) : String.fromCharCode(97 + n - 10));
+  let out = '';
+  let any = false;
+  for (const d of declarers) {
+    const seat = boardDD[d];
+    for (const s of strains) {
+      const v = seat ? seat[s] : null;
+      if (v != null) any = true;
+      out += toHex(v);
+    }
+  }
+  return any ? out : null;
+}
+
+async function fetchDD(dealInfo, activeResult, boardNumber) {
   cachedDDTricks = null;
   const ddEl = document.getElementById('dd-section');
   ddEl.innerHTML = '<div class="bba-loading">Loading DD analysis...</div>';
+
+  // First try the normalized JSON — both adapters populate per-declarer
+  // DD when the source has it (PBN [DoubleDummyTricks] tag, ACBL Live's
+  // double-dummy block). Avoids hitting BSOL (which rate-limits 429s
+  // after a handful of consecutive board navigations) when we already
+  // have the same data locally. Lazy-load it on first board view if
+  // shadow mode hasn't already cached it.
+  if (!cachedNormalized && boardNumber != null) {
+    try { await loadNormalized(); } catch (e) { /* fall through to BSOL */ }
+  }
+  if (cachedNormalized && boardNumber != null) {
+    const session = pickSession(cachedNormalized, currentSessionIdx);
+    const board = session?.boards.find(b => b.number === boardNumber);
+    const ddString = buildDDStringFromSchema(board?.double_dummy);
+    if (ddString) {
+      cachedDDTricks = ddString;
+      renderDDTable(cachedDDTricks, activeResult);
+      return;
+    }
+  }
+
+  // Fall back to BSOL only when DD isn't in the schema (older PBN files
+  // without the [DoubleDummyTricks] tag).
   try {
     const pbn = dealInfo.pbn.replace(/ /g, 'x');
     const vul = dealInfo.vulnerability === 'Both' ? 'All' : dealInfo.vulnerability;
