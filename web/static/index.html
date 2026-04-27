@@ -720,18 +720,29 @@ function boardTypeEquivalent(serverBT, jsBT, allResults) {
     return false;
   }
   if (kindOf(serverBT) === 'Competitive') {
-    if (srvArgs[0] !== jsArgs[0]) return false; // player strain (NS-perspective)
-    // Opponent (EW) strain disagreement is OK if either choice tied for
-    // primary on the EW side.
-    const ewMap = new Map();
-    for (const r of allResults) {
-      if (!r.contract || r.contract === 'PASS') continue;
-      if (declaringDirection(r) !== 'EW') continue;
-      const s = extractStrain(r.contract);
-      ewMap.set(s, (ewMap.get(s) || 0) + 1);
-    }
-    const counts = [srvArgs[1], jsArgs[1]].map(s => ewMap.get(s) || 0);
-    return counts[0] === counts[1] && counts[0] >= 2;
+    // The classifier picks each side's primary strain via stable sort over
+    // randomized HashMap iteration, so ties on EITHER side can produce a
+    // valid-but-different choice. Equivalent if positional counts tie:
+    // count(NS strain) on NS side matches between server's pick and JS's
+    // pick, and count(EW strain) on EW side does the same.
+    const sideCounts = (side) => {
+      const m = new Map();
+      for (const r of allResults) {
+        if (!r.contract || r.contract === 'PASS') continue;
+        if (declaringDirection(r) !== side) continue;
+        const s = extractStrain(r.contract);
+        m.set(s, (m.get(s) || 0) + 1);
+      }
+      return m;
+    };
+    const nsCounts = sideCounts('NS');
+    const ewCounts = sideCounts('EW');
+    const ns = (s) => nsCounts.get(s) || 0;
+    const ew = (s) => ewCounts.get(s) || 0;
+    // Both choices must be qualifying (count >= 2) on their respective sides.
+    if (ns(srvArgs[0]) < 2 || ns(jsArgs[0]) < 2) return false;
+    if (ew(srvArgs[1]) < 2 || ew(jsArgs[1]) < 2) return false;
+    return ns(srvArgs[0]) === ns(jsArgs[0]) && ew(srvArgs[1]) === ew(jsArgs[1]);
   }
   if (kindOf(serverBT) === 'Slam vs Game' || kindOf(serverBT) === 'Game vs Partscore') {
     // Both single-strain classifications — counts must tie in the relevant
