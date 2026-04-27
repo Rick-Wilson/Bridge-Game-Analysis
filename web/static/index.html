@@ -208,6 +208,11 @@ tr.clickable-row:hover td { background: #e0e7ff; }
     <div class="event-info">
       <strong id="event-name"></strong><span id="event-date"></span>
       <select id="session-selector" class="hidden" style="margin-left:0.5rem;font-size:0.85rem;padding:0.25rem 0.5rem;"></select>
+      <button id="engine-chip"
+              title="Click to cycle: server / shadow / js. Shadow runs both engines and logs diffs."
+              style="margin-left:0.5rem;font-size:0.7rem;padding:0.2rem 0.5rem;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text-muted);cursor:pointer;">
+        engine: shadow
+      </button>
     </div>
     <div style="display:flex;gap:0.375rem;align-items:center;">
       <button class="btn btn-sm btn-outline active" id="tab-players" onclick="switchView('players')">Players</button>
@@ -300,16 +305,33 @@ let cachedSessions = [];       // [{ session_idx, label, board_count, result_cou
 // cause analysis, ...) and adds a parity check that cross-validates against
 // the server's response on the same input.
 //
-// Engine selection via `?engine=` URL param (debug-only, not user-facing yet):
-//   server  — only the Rust analyzer runs (default; current behavior)
-//   shadow  — server runs, JS runs in shadow, console diffs anything mismatched
-//   js      — only the JS analyzer runs (will fail until the port is complete)
+// Engine selection. Defaults to "shadow" during the test phase so any user
+// running real games gets a parity check for free, console-visible. The URL
+// param (?engine=) overrides — useful for in-browser testing without
+// touching localStorage. localStorage is the user-clickable persistent
+// override (see the indicator chip in the event header).
+//   server  — only the Rust analyzer runs
+//   shadow  — server runs (rendered), JS runs in shadow, diffs counted
+//   js      — only the JS analyzer runs (no server round-trip per click)
 //
 // `cachedNormalized` holds the full normalized JSON document for the current
 // upload, fetched once on upload via /api/normalized. The JS analyzer reads
 // from it directly (it's the same shape the Rust schema deserializes from).
-const ANALYSIS_ENGINE = new URLSearchParams(location.search).get('engine') || 'server';
+const ENGINE_LS_KEY = 'analysis-engine';
+function resolveEngine() {
+  const fromUrl = new URLSearchParams(location.search).get('engine');
+  if (fromUrl) return fromUrl;
+  try {
+    const fromLs = localStorage.getItem(ENGINE_LS_KEY);
+    if (fromLs) return fromLs;
+  } catch (e) {}
+  return 'shadow';
+}
+let ANALYSIS_ENGINE = resolveEngine();
 let cachedNormalized = null;
+// Running parity tally (rolling, since last "New File"). Updated by the
+// shadow-mode hooks, displayed in the engine chip.
+let parityStats = { ok: 0, diffs: 0, lastDiffs: [] };
 
 // Bridge-domain string constants. Keep these as plain strings (matching the
 // schema's wire shape) rather than wrapping them in objects — saves us a
@@ -1541,17 +1563,26 @@ function compareMatchpointsForBoard(serverResp, normalized, sessionIdx, boardNum
   return diffs;
 }
 
+/** Update parity tally + chip after a shadow run. */
+function recordParity(label, diffs) {
+  if (diffs.length === 0) {
+    parityStats.ok++;
+    console.log(`[parity] ${label} — OK`);
+  } else {
+    parityStats.diffs++;
+    parityStats.lastDiffs = diffs.slice(0, 5);
+    console.warn(`[parity] ${label} — ${diffs.length} diff(s):`, diffs);
+  }
+  refreshEngineChip();
+}
+
 /** Run shadow-mode checks for the most recent player response. */
 async function runShadowPlayer(serverResp, playerName) {
   if (ANALYSIS_ENGINE === 'server') return;
   try {
     const normalized = await loadNormalized();
     const diffs = compareMatchpointsForPlayer(serverResp, normalized, currentSessionIdx, playerName);
-    if (diffs.length === 0) {
-      console.log(`[parity] player "${playerName}" — matchpoints OK across ${serverResp.board_results.length} boards`);
-    } else {
-      console.warn(`[parity] player "${playerName}" — ${diffs.length} matchpoint diff(s):`, diffs);
-    }
+    recordParity(`player "${playerName}" (${serverResp.board_results.length} boards)`, diffs);
   } catch (e) {
     console.warn('[parity] player check failed:', e.message);
   }
@@ -1563,14 +1594,47 @@ async function runShadowBoard(serverResp, boardNum) {
   try {
     const normalized = await loadNormalized();
     const diffs = compareMatchpointsForBoard(serverResp, normalized, currentSessionIdx, boardNum);
-    if (diffs.length === 0) {
-      console.log(`[parity] board ${boardNum} — matchpoints OK across ${serverResp.results.length} tables`);
-    } else {
-      console.warn(`[parity] board ${boardNum} — ${diffs.length} matchpoint diff(s):`, diffs);
-    }
+    recordParity(`board ${boardNum} (${serverResp.results.length} tables)`, diffs);
   } catch (e) {
     console.warn('[parity] board check failed:', e.message);
   }
+}
+
+/** Re-render the engine chip text + color from current state. */
+function refreshEngineChip() {
+  const chip = document.getElementById('engine-chip');
+  if (!chip) return;
+  const eng = ANALYSIS_ENGINE;
+  let text = `engine: ${eng}`;
+  let bg = 'var(--surface)';
+  let color = 'var(--text-muted)';
+  if (eng === 'shadow') {
+    if (parityStats.ok + parityStats.diffs > 0) {
+      text = parityStats.diffs === 0
+        ? `parity ✓ ${parityStats.ok}/${parityStats.ok}`
+        : `parity ${parityStats.ok}/${parityStats.ok + parityStats.diffs} (${parityStats.diffs} ⚠)`;
+      bg = parityStats.diffs === 0 ? '#e8f5e8' : '#fdf6e7';
+      color = parityStats.diffs === 0 ? '#2a662a' : '#8a5a00';
+    }
+  } else if (eng === 'js') {
+    text = 'engine: JS only';
+    bg = '#e8f0f8';
+    color = '#1e4080';
+  }
+  chip.textContent = text;
+  chip.style.background = bg;
+  chip.style.color = color;
+}
+
+/** Cycle the engine: server → shadow → js → server. Persists in localStorage
+ *  and reloads so the new engine takes effect cleanly (cachedNormalized,
+ *  parityStats, and any in-flight server response all reset). */
+function cycleEngine() {
+  const order = ['server', 'shadow', 'js'];
+  const cur = order.indexOf(ANALYSIS_ENGINE);
+  const next = order[(cur + 1) % order.length];
+  try { localStorage.setItem(ENGINE_LS_KEY, next); } catch (e) {}
+  location.reload();
 }
 
 // =========================================================================
@@ -1682,6 +1746,15 @@ function applyUploadResponse(data, opts) {
   document.getElementById('pbn-notice').classList.toggle('hidden', pbnHidden);
   renderSessionSelector();
   showNamesNotice(data);
+  // Initialize the engine chip + click handler now that the event header
+  // is visible. Reset parity stats since this is a fresh upload.
+  parityStats = { ok: 0, diffs: 0, lastDiffs: [] };
+  refreshEngineChip();
+  const chip = document.getElementById('engine-chip');
+  if (chip && !chip.dataset.wired) {
+    chip.dataset.wired = '1';
+    chip.addEventListener('click', cycleEngine);
+  }
   switchView('players');
 }
 
