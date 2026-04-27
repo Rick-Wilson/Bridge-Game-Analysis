@@ -764,6 +764,354 @@ function computeBoardContext(allResults, parArray) {
   };
 }
 
+// ---- Cause analysis ----
+//
+// Direct port of analysis::metrics::player::determine_cause_and_notes —
+// the 440-line decision tree that classifies each result as Good / Lucky /
+// Play / Defense / Auction / Unlucky and produces the textual notes.
+//
+// CauseContext is a record collecting everything the tree reads:
+//   role                            'Declarer' | 'Dummy' | 'Defender'
+//   matchpointPct                   number 0..100
+//   declarerVsField                 number | null (only when meaningful)
+//   matchedFieldContract            bool
+//   sameStrainAsField               bool
+//   playerSideTypicallyDeclares     bool
+//   fieldIsCrossDirection           bool
+//   wentDown                        bool
+//   ddTricks                        number 0..13 | null
+//   tricksMade                      number 0..13 | null
+//   boardType                       BoardType display string
+//   competitive                     CompetitiveInfo | null (player's perspective)
+//   contract                        canonical string | null | "PASS"
+//   fieldContract                   canonical string | null
+//   contractIsPar                   bool
+//
+// The tree returns { cause: string, notes: string }. Cause values mirror
+// the Rust ResultCause enum's Display form ("Good", "Lucky", ...).
+
+const SUIT_ORDER_RANK = { C: 0, D: 1, H: 2, S: 3, NT: 4 };
+
+/** Bid rank: 1C < 1D < 1H < 1S < 1NT < 2C < ... < 7NT. Mirrors bid_rank_of. */
+function bidRankOf(level, strain) { return (level - 1) * 5 + (SUIT_ORDER_RANK[strain] ?? 0); }
+/** Bid rank of a canonical contract string. */
+function bidRank(contract) {
+  const lvl = parseInt(contract[0], 10);
+  return bidRankOf(lvl, extractStrain(contract));
+}
+/** Smallest level (1-7) at which `strain` outbids `contract`. */
+function minOutbidLevel(contract, strain) {
+  const target = bidRank(contract);
+  for (let level = 1; level <= 7; level++) {
+    if (bidRankOf(level, strain) > target) return level;
+  }
+  return null;
+}
+function tricksWord(n) { return Math.abs(n) === 1 ? 'trick' : 'tricks'; }
+
+/** Round half away from zero — matches Rust's f64::round semantics.
+ *  JS's Math.round rounds half toward +Infinity, so Math.round(-0.5) === 0
+ *  while (-0.5_f64).round() === -1. This wrapper aligns the two so trick
+ *  diffs at .5 boundaries route into the same cause branch. */
+function rustRound(x) {
+  return Math.sign(x) * Math.round(Math.abs(x));
+}
+function levelOf(c) { return parseInt(c[0], 10); }
+
+/** Look up double-dummy tricks for a (declarer, strain) on a board.
+ *  Schema's double_dummy is {N|E|S|W: {C, D, H, S, NT}}. */
+function ddTricksLookup(board, declarer, strain) {
+  const dd = board.double_dummy;
+  if (!dd) return null;
+  const seat = dd[declarer];
+  if (!seat) return null;
+  // Schema uses "C", "D", "H", "S", "NT" as keys.
+  return seat[strain] ?? null;
+}
+
+/** Equivalent of Rust's format_auction_note. */
+function formatAuctionNote(actual, field) {
+  if (!actual && !field) return '';
+  if (actual && !field) return '';
+  if (!actual && field) return `missed ${field}`;
+  // Both present — actual is non-PASS canonical, field is non-null canonical.
+  const aLvl = levelOf(actual), fLvl = levelOf(field);
+  const aS = extractStrain(actual), fS = extractStrain(field);
+  if (aS !== fS) return `${aS} vs ${fS}`;
+  if (aLvl < fLvl) {
+    const missedGame = isGameLevel(field) && !isGameLevel(actual);
+    const missedSlam = fLvl >= 6 && aLvl < 6;
+    return missedGame || missedSlam ? `underbid (${field})` : '';
+  }
+  if (aLvl > fLvl) {
+    const extraGame = isGameLevel(actual) && !isGameLevel(field);
+    const extraSlam = aLvl >= 6 && fLvl < 6;
+    return extraGame || extraSlam ? `overbid (${field})` : '';
+  }
+  return '';
+}
+
+/** The full cause-analysis decision tree. Direct line-for-line port of
+ *  determine_cause_and_notes — see analysis/src/metrics/player.rs. */
+function determineCauseAndNotes(ctx) {
+  const isGood = ctx.matchpointPct >= 55.0;
+  const isBad = ctx.matchpointPct <= 45.0;
+
+  if (ctx.role === 'Declarer') {
+    if (ctx.contractIsPar && ctx.ddTricks != null && ctx.tricksMade != null && ctx.tricksMade === ctx.ddTricks) {
+      return { cause: 'Good', notes: `par (${ctx.ddTricks})` };
+    }
+    if (ctx.competitive && ctx.contract && ctx.contract !== 'PASS') {
+      const cStrain = extractStrain(ctx.contract);
+      const cLvl = levelOf(ctx.contract);
+      if (cStrain === ctx.competitive.playerStrain &&
+          bidRankOf(ctx.competitive.oppMaxLevel, ctx.competitive.oppStrain) > bidRankOf(cLvl, cStrain) &&
+          isGood) {
+        return { cause: 'Lucky', notes: 'opps failed to compete' };
+      }
+    }
+    if (ctx.fieldIsCrossDirection) {
+      if (isGood) return { cause: 'Good', notes: 'competed successfully' };
+      if (isBad) {
+        if (ctx.contract && ctx.contract !== 'PASS' && ctx.ddTricks != null && ctx.wentDown) {
+          const needed = levelOf(ctx.contract) + 6;
+          if (ctx.ddTricks >= needed) return { cause: 'Play', notes: `below DD (${ctx.ddTricks})` };
+        }
+        return { cause: 'Auction', notes: 'competed too high' };
+      }
+      return { cause: 'Auction', notes: 'competed' };
+    }
+    const auctionNote = !ctx.matchedFieldContract ? formatAuctionNote(ctx.contract, ctx.fieldContract) : '';
+    if (ctx.sameStrainAsField) {
+      if (ctx.matchedFieldContract && ctx.ddTricks != null && ctx.tricksMade != null) {
+        const ddDiff = ctx.tricksMade - ctx.ddTricks;
+        if (ddDiff > 0) return { cause: 'Lucky', notes: `defense slip (DD ${ctx.ddTricks})` };
+        if (ddDiff < 0) return { cause: 'Play', notes: `below DD (${ctx.ddTricks})` };
+        return { cause: 'Good', notes: `DD par (${ctx.ddTricks})` };
+      }
+      if (ctx.declarerVsField != null) {
+        const td = rustRound(ctx.declarerVsField);
+        if (td < 0) {
+          const tn = `${-td} ${tricksWord(td)} fewer`;
+          const note = auctionNote ? `${tn}, also ${auctionNote}` : tn;
+          return { cause: 'Play', notes: note };
+        }
+        if (td > 0) {
+          const tn = `+${td} ${tricksWord(td)}`;
+          const note = auctionNote ? `${tn}, also ${auctionNote}` : tn;
+          return { cause: isGood ? 'Good' : 'Play', notes: note };
+        }
+        if (ctx.matchedFieldContract) {
+          if (isGood) return { cause: 'Good', notes: '' };
+          if (isBad) return { cause: 'Unlucky', notes: 'field avg' };
+        }
+      }
+      if (ctx.wentDown && ctx.contract && ctx.contract !== 'PASS' && ctx.fieldContract) {
+        if (levelOf(ctx.contract) < levelOf(ctx.fieldContract)) {
+          return { cause: 'Play', notes: 'went down' };
+        }
+      }
+    } else {
+      if (ctx.competitive && ctx.fieldContract && extractStrain(ctx.fieldContract) === ctx.competitive.oppStrain) {
+        if (isGood) return { cause: 'Good', notes: 'competed successfully' };
+        if (isBad) return { cause: 'Auction', notes: 'competed too high' };
+        return { cause: 'Auction', notes: 'competed' };
+      }
+      if (auctionNote) {
+        return { cause: isGood ? 'Good' : 'Auction', notes: auctionNote };
+      }
+    }
+    if (!ctx.matchedFieldContract && auctionNote) {
+      return { cause: isGood ? 'Good' : 'Auction', notes: auctionNote };
+    }
+  } else if (ctx.role === 'Dummy') {
+    if (ctx.contractIsPar && ctx.ddTricks != null && ctx.tricksMade != null && ctx.tricksMade === ctx.ddTricks) {
+      return { cause: 'Good', notes: `par (${ctx.ddTricks})` };
+    }
+    if (ctx.competitive && ctx.contract && ctx.contract !== 'PASS') {
+      const cStrain = extractStrain(ctx.contract);
+      const cLvl = levelOf(ctx.contract);
+      if (cStrain === ctx.competitive.playerStrain &&
+          bidRankOf(ctx.competitive.oppMaxLevel, ctx.competitive.oppStrain) > bidRankOf(cLvl, cStrain) &&
+          isGood) {
+        return { cause: 'Lucky', notes: 'opps failed to compete' };
+      }
+    }
+    if (ctx.fieldIsCrossDirection) {
+      if (isGood) return { cause: 'Good', notes: 'competed successfully' };
+      if (isBad) {
+        if (ctx.contract && ctx.contract !== 'PASS' && ctx.ddTricks != null && ctx.wentDown) {
+          const needed = levelOf(ctx.contract) + 6;
+          if (ctx.ddTricks >= needed) return { cause: 'Play', notes: `pard below DD (${ctx.ddTricks})` };
+        }
+        return { cause: 'Auction', notes: 'competed too high' };
+      }
+      return { cause: 'Auction', notes: 'competed' };
+    }
+    const auctionNote = !ctx.matchedFieldContract ? formatAuctionNote(ctx.contract, ctx.fieldContract) : '';
+    if (ctx.sameStrainAsField) {
+      if (ctx.matchedFieldContract && ctx.ddTricks != null && ctx.tricksMade != null) {
+        const ddDiff = ctx.tricksMade - ctx.ddTricks;
+        if (ddDiff > 0) return { cause: 'Lucky', notes: `defense slip (DD ${ctx.ddTricks})` };
+        if (ddDiff < 0) return { cause: 'Play', notes: `pard below DD (${ctx.ddTricks})` };
+        return { cause: 'Good', notes: `DD par (${ctx.ddTricks})` };
+      }
+      if (ctx.declarerVsField != null) {
+        const td = rustRound(ctx.declarerVsField);
+        if (td < 0) {
+          const tn = `pard ${td} ${tricksWord(td)}`;
+          const note = auctionNote ? `${tn}, also ${auctionNote}` : tn;
+          return { cause: 'Play', notes: note };
+        }
+        if (td > 0) {
+          const tn = `pard +${td} ${tricksWord(td)}`;
+          const note = auctionNote ? `${tn}, also ${auctionNote}` : tn;
+          return { cause: isGood ? 'Good' : 'Play', notes: note };
+        }
+      }
+      if (ctx.wentDown && ctx.contract && ctx.contract !== 'PASS' && ctx.fieldContract) {
+        if (levelOf(ctx.contract) < levelOf(ctx.fieldContract)) {
+          return { cause: 'Play', notes: 'pard went down' };
+        }
+      }
+    } else {
+      if (ctx.competitive && ctx.fieldContract && extractStrain(ctx.fieldContract) === ctx.competitive.oppStrain) {
+        if (isGood) return { cause: 'Good', notes: 'competed successfully' };
+        if (isBad) return { cause: 'Auction', notes: 'competed too high' };
+        return { cause: 'Auction', notes: 'competed' };
+      }
+      if (auctionNote) {
+        return { cause: isGood ? 'Good' : 'Auction', notes: auctionNote };
+      }
+    }
+    if (!ctx.matchedFieldContract && auctionNote) {
+      return { cause: isGood ? 'Good' : 'Auction', notes: auctionNote };
+    }
+  } else if (ctx.role === 'Defender') {
+    if (ctx.wentDown && ctx.matchpointPct < 45.0 && ctx.contract && ctx.contract !== 'PASS') {
+      // Doubled char is the substring after level + strain
+      const sLen = extractStrain(ctx.contract) === 'NT' ? 2 : 1;
+      const doubledStr = ctx.contract.substring(1 + sLen);
+      if (doubledStr === '') {
+        return { cause: 'Auction', notes: "didn't double" };
+      }
+    }
+    if (ctx.competitive && ctx.contract && ctx.contract !== 'PASS') {
+      const cStrain = extractStrain(ctx.contract);
+      const cLvl = levelOf(ctx.contract);
+      if (cStrain === ctx.competitive.oppStrain &&
+          bidRankOf(ctx.competitive.playerMaxLevel, ctx.competitive.playerStrain) > bidRankOf(cLvl, cStrain)) {
+        const outbidLevel = minOutbidLevel(ctx.contract, ctx.competitive.playerStrain) ?? ctx.competitive.playerMaxLevel;
+        const note = `failed to compete to ${outbidLevel}${ctx.competitive.playerStrain}`;
+        if (isBad) return { cause: 'Auction', notes: note };
+        if (isGood) {
+          const oppsNote = ctx.wentDown ? 'opps bid too high' : 'opps stopped low';
+          return { cause: 'Lucky', notes: oppsNote };
+        }
+      }
+    }
+    if (ctx.fieldIsCrossDirection) {
+      if (isGood) return { cause: 'Lucky', notes: 'opps competed too high' };
+      if (isBad) return { cause: 'Auction', notes: 'failed to compete' };
+      return { cause: 'Lucky', notes: 'opps competed' };
+    }
+    if (ctx.sameStrainAsField) {
+      if (ctx.matchedFieldContract && ctx.ddTricks != null && ctx.tricksMade != null) {
+        const ddDiff = ctx.tricksMade - ctx.ddTricks;
+        if (ddDiff > 0) return { cause: 'Defense', notes: `DD slip (gave ${ddDiff} extra)` };
+        if (ddDiff < 0) return { cause: 'Lucky', notes: `held below DD (${ctx.ddTricks})` };
+        return { cause: 'Good', notes: `DD par (${ctx.ddTricks})` };
+      }
+      if (ctx.declarerVsField != null) {
+        const td = rustRound(ctx.declarerVsField);
+        if (td > 0) {
+          const note = `gave ${td} ${tricksWord(td)}`;
+          if (isBad) return { cause: 'Defense', notes: note };
+        } else if (td < 0) {
+          const note = `held to ${td}`;
+          if (isGood) return { cause: 'Good', notes: note };
+          return { cause: 'Defense', notes: note };
+        }
+      }
+      if (!ctx.matchedFieldContract && ctx.contract && ctx.contract !== 'PASS' && ctx.fieldContract) {
+        const aLvl = levelOf(ctx.contract), fLvl = levelOf(ctx.fieldContract);
+        if (aLvl < fLvl) {
+          const cross = (isGameLevel(ctx.fieldContract) && !isGameLevel(ctx.contract)) || (fLvl >= 6 && aLvl < 6);
+          if (cross) {
+            if (isGood) return { cause: 'Lucky', notes: 'opps underbid' };
+            if (isBad) return { cause: 'Unlucky', notes: 'opps underbid' };
+          }
+        } else if (aLvl > fLvl) {
+          const cross = (isGameLevel(ctx.contract) && !isGameLevel(ctx.fieldContract)) || (aLvl >= 6 && fLvl < 6);
+          if (cross) {
+            if (isGood) return { cause: 'Lucky', notes: 'opps overbid' };
+            if (isBad) return { cause: 'Unlucky', notes: 'opps overbid' };
+          }
+        }
+      }
+    } else if (ctx.contract && ctx.contract !== 'PASS' && ctx.fieldContract) {
+      if (ctx.playerSideTypicallyDeclares && bidRank(ctx.contract) < bidRank(ctx.fieldContract)) {
+        const note = `failed to compete to ${ctx.fieldContract}`;
+        if (isBad) return { cause: 'Auction', notes: note };
+        if (isGood) return { cause: 'Good', notes: note };
+      }
+      if (!ctx.playerSideTypicallyDeclares) {
+        if (isBad) return { cause: 'Unlucky', notes: 'opps superior contract' };
+        if (isGood) return { cause: 'Lucky', notes: 'opps inferior contract' };
+      }
+    }
+    if (isGood) return { cause: 'Lucky', notes: '' };
+    if (isBad) return { cause: 'Unlucky', notes: '' };
+  }
+
+  // Default by matchpoint result.
+  if (isGood) return { cause: 'Good', notes: '' };
+  if (isBad) return { cause: 'Unlucky', notes: '' };
+  return { cause: 'Good', notes: '' };
+}
+
+/** Build the CauseContext for a (board, result, role, direction) tuple,
+ *  reusing the previously-ported helpers. `boardCtx` is the output of
+ *  computeBoardContext. */
+function buildCauseContext(board, result, role, direction, boardCtx) {
+  const declarerIsNs = declaringDirection(result) === 'NS';
+  const fieldIsCrossDirection = result.contract && result.contract !== 'PASS' &&
+    boardCtx.fieldDeclaringDirection != null &&
+    declaringDirection(result) !== boardCtx.fieldDeclaringDirection;
+  const tricks = tricksMade(result);
+  const wentDown = tricks != null && result.contract && result.contract !== 'PASS' &&
+    tricks < levelOf(result.contract) + 6;
+  const ddT = (result.contract && result.contract !== 'PASS')
+    ? ddTricksLookup(board, result.declarer, extractStrain(result.contract))
+    : null;
+  const competitive = direction === 'NS' ? boardCtx.competitiveNs : boardCtx.competitiveEw;
+  const playerSideTypicallyDeclares = direction === 'NS'
+    ? boardCtx.nsTypicallyDeclares : boardCtx.ewTypicallyDeclares;
+  const matched = matchedFieldContract(result.contract, boardCtx.fieldContract);
+  const sameStrain = sameStrainAsField(result.contract, boardCtx.fieldContract);
+  const playerSideIsDeclarer = declarerIsNs === (direction === 'NS');
+  const contractIsPar = playerSideIsDeclarer && contractMatchesPar(result.contract, declarerIsNs, boardCtx.par);
+  const dvf = declarerVsField(result, boardCtx.fieldTrickAverages);
+  // matchpointPct is per-direction
+  return {
+    role,
+    matchpointPct: 0, // filled in by caller (it varies by use site)
+    declarerVsField: dvf,
+    matchedFieldContract: matched,
+    sameStrainAsField: sameStrain,
+    playerSideTypicallyDeclares,
+    fieldIsCrossDirection,
+    wentDown,
+    ddTricks: ddT,
+    tricksMade: tricks,
+    boardType: boardCtx.boardType,
+    competitive,
+    contract: result.contract,
+    fieldContract: boardCtx.fieldContract,
+    contractIsPar,
+  };
+}
+
 // ---- Parity (shadow-mode) checks ----
 //
 // Each "compare<X>" function takes the server response and the same input the
@@ -838,6 +1186,21 @@ function compareMatchpointsForPlayer(serverResp, normalized, sessionIdx, playerN
           server: br.matched_field_contract,
           js: matchedFieldContract(myResult.contract, jsField),
         });
+      }
+    }
+    // Cause + notes — only check when prior pieces agree, so a cause
+    // mismatch is unambiguously a cause-tree port bug, not a downstream
+    // effect of a different field contract / board type / competitive info.
+    // (Tie-equivalent board types aren't enough — a tied competitive primary
+    // strain shifts which cause branch fires, so insist on an EXACT match.)
+    if (br.field_contract === jsField && br.board_type === ctx.boardType) {
+      const causeCtx = buildCauseContext(board, myResult, br.role, br.direction, ctx);
+      causeCtx.matchpointPct = br.matchpoint_pct;
+      const { cause, notes } = determineCauseAndNotes(causeCtx);
+      if (cause !== br.cause) {
+        diffs.push({ kind: 'cause-mismatch', board: br.board_number, server: br.cause, js: cause, srvNotes: br.notes, jsNotes: notes });
+      } else if (notes !== br.notes) {
+        diffs.push({ kind: 'notes-mismatch', board: br.board_number, cause, server: br.notes, js: notes });
       }
     }
   }
@@ -927,6 +1290,29 @@ function compareMatchpointsForBoard(serverResp, normalized, sessionIdx, boardNum
       if (jsMatched !== row.ew_analysis.matched_field_contract) {
         diffs.push({ kind: 'matched-field-mismatch', dir: 'EW', ns_pair: row.ns_pair,
           server: row.ew_analysis.matched_field_contract, js: jsMatched });
+      }
+      // Cause + notes for both directions. Board view roles are simpler
+      // than player view: 'Declarer' for the side that declared, 'Defender'
+      // for the other side; passouts get 'Defender' for both. Insist on an
+      // EXACT board_type match (not just tie-equivalent) because tied
+      // competitive primaries shift which cause branch fires.
+      if (serverResp.board_type === ctx.boardType) {
+        const isPass = !r.contract || r.contract === 'PASS';
+        const declSide = isPass ? null : declaringDirection(r);
+        const nsRole = isPass ? 'Defender' : (declSide === 'NS' ? 'Declarer' : 'Defender');
+        const ewRole = isPass ? 'Defender' : (declSide === 'EW' ? 'Declarer' : 'Defender');
+        for (const [dir, role, sideAnalysis] of [['NS', nsRole, row.ns_analysis], ['EW', ewRole, row.ew_analysis]]) {
+          const causeCtx = buildCauseContext(board, r, role, dir, ctx);
+          causeCtx.matchpointPct = sideAnalysis.matchpoint_pct;
+          const { cause, notes } = determineCauseAndNotes(causeCtx);
+          if (cause !== sideAnalysis.cause) {
+            diffs.push({ kind: 'cause-mismatch', dir, ns_pair: row.ns_pair,
+              server: sideAnalysis.cause, js: cause, srvNotes: sideAnalysis.notes, jsNotes: notes });
+          } else if (notes !== sideAnalysis.notes) {
+            diffs.push({ kind: 'notes-mismatch', dir, ns_pair: row.ns_pair,
+              cause, server: sideAnalysis.notes, js: notes });
+          }
+        }
       }
     }
   }
