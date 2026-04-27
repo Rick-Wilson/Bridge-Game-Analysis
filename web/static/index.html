@@ -1385,18 +1385,23 @@ function compareMatchpointsForPlayer(serverResp, normalized, sessionIdx, playerN
         delta: jsMp - br.matchpoint_pct,
       });
     }
-    // declarer_vs_field: server reports it on every PlayerBoardResult; JS
-    // re-derives from the field averages of the same board.
-    const avgs = fieldTrickAverages(board.results);
-    const jsDvF = declarerVsField(myResult, avgs);
-    if (!nullableNumberEqual(jsDvF, br.declarer_vs_field, 0.001)) {
-      diffs.push({
-        kind: 'dvf-mismatch',
-        board: br.board_number,
-        dir: br.direction,
-        server: br.declarer_vs_field,
-        js: jsDvF,
-      });
+    // declarer_vs_field: server's PlayerBoardResult only populates this
+    // when the player was the declarer (see analysis/src/metrics/player.rs:
+    // `declarer_vs_field: if was_declarer { ... } else { None }`). Mirror
+    // that filter — comparing JS's unconditional value to server null
+    // would flag every Dummy/Defender row spuriously.
+    if (br.role === 'Declarer') {
+      const avgs = fieldTrickAverages(board.results);
+      const jsDvF = declarerVsField(myResult, avgs);
+      if (!nullableNumberEqual(jsDvF, br.declarer_vs_field, 0.001)) {
+        diffs.push({
+          kind: 'dvf-mismatch',
+          board: br.board_number,
+          dir: br.direction,
+          server: br.declarer_vs_field,
+          js: jsDvF,
+        });
+      }
     }
     // Full board context (field contract, board type, declarer flags, ...).
     const ctx = computeBoardContext(board.results, board.par);
