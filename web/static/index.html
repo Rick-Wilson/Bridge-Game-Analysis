@@ -300,6 +300,29 @@ function sessionParams() {
   return qs;
 }
 
+/** Reset all in-flight session/upload state so a new upload starts clean.
+ *  Without this, a stale `cachedSessions` from a prior multi-session upload
+ *  would leak into the next upload's autoFillFromStorage refetch and produce
+ *  out-of-range session_idx errors. */
+function resetSessionState() {
+  sessionId = null;
+  cachedPlayers = [];
+  cachedBoards = [];
+  cachedSessions = [];
+  currentSessionIdx = 0;
+  currentBoard = null;
+  currentPlayerName = null;
+}
+
+/** Fetch + JSON wrapper that throws the response body text (not a JSON
+ *  parse error) when the request fails. Use anywhere a fetch result is
+ *  unconditionally fed into .json(). */
+async function getJSON(url, init) {
+  const res = await fetch(url, init);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 // ==================== Upload ====================
 const fileInput = document.getElementById('file-input');
 const fileNames = document.getElementById('file-names');
@@ -325,6 +348,11 @@ async function doUpload(files, addTo) {
     formData.append(ext === 'pbn' ? 'pbn' : 'bws', f);
     if (ext === 'pbn') hasPbn = true;
   }
+  // Drop any stale state before the upload — a prior multi-session JSON
+  // load could otherwise leave cachedSessions populated, which sessionParams()
+  // would then use to append an out-of-range session_idx during the
+  // autoFillFromStorage refetch below.
+  resetSessionState();
   showLoading(true); showError('');
   try {
     const url = addTo ? `${BASE}/api/upload?add_to=${addTo}` : `${BASE}/api/upload`;
@@ -332,6 +360,9 @@ async function doUpload(files, addTo) {
     if (!res.ok) throw new Error(await res.text());
     let data = await res.json();
     sessionId = data.session_id;
+    // Pre-populate cachedSessions so sessionParams() reflects the new
+    // upload's session list during autoFillFromStorage's refetch.
+    cachedSessions = data.sessions || [];
 
     // Merge any real names from this upload into localStorage
     mergeNamesToStorage(data.player_acbl);
@@ -390,8 +421,8 @@ function renderSessionSelector() {
     try {
       showLoading(true); showError('');
       const [players, boards] = await Promise.all([
-        fetch(`${BASE}/api/players?${sessionParams()}`).then(r => r.json()),
-        fetch(`${BASE}/api/boards?${sessionParams()}`).then(r => r.json()),
+        getJSON(`${BASE}/api/players?${sessionParams()}`),
+        getJSON(`${BASE}/api/boards?${sessionParams()}`),
       ]);
       cachedPlayers = players.players;
       cachedBoards = boards.boards;
@@ -446,7 +477,7 @@ async function autoFillFromStorage(data) {
     body: JSON.stringify(toApply)
   });
   // Refetch upload-like info (we only need the updated player list + missing_players)
-  const refreshed = await fetch(`${BASE}/api/players?${sessionParams()}`).then(r => r.json());
+  const refreshed = await getJSON(`${BASE}/api/players?${sessionParams()}`);
   // Rebuild a data object that looks like an upload response with updates
   data.players = refreshed.players;
   // Remove now-filled placeholders
@@ -522,7 +553,7 @@ document.getElementById('paste-names-apply').addEventListener('click', async () 
   saveStoredNames(stored);
 
   // Refetch player list and update state
-  const updated = await fetch(`${BASE}/api/players?${sessionParams()}`).then(r => r.json());
+  const updated = await getJSON(`${BASE}/api/players?${sessionParams()}`);
   cachedPlayers = updated.players;
   // Remove now-filled placeholders from missing_players
   lastUpload.missing_players = lastUpload.missing_players.filter(mp => !overrides[mp.acbl_number]);
@@ -556,7 +587,9 @@ document.getElementById('pbn-add-input').addEventListener('change', async (e) =>
   if (file && sessionId) doUpload([file], sessionId);
 });
 document.getElementById('new-file-btn').addEventListener('click', () => {
-  sessionId = null; fileInput.value = ''; fileNames.textContent = '';
+  resetSessionState();
+  fileInput.value = ''; fileNames.textContent = '';
+  document.getElementById('session-selector').classList.add('hidden');
   uploadArea.classList.remove('hidden');
   document.getElementById('download-help').classList.remove('hidden');
   document.getElementById('event-header').classList.add('hidden');
