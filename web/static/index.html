@@ -340,16 +340,159 @@ async function loadNormalized() {
   return cachedNormalized;
 }
 
-/** Hook for the parity / JS-only paths. Currently unused — slices to come will
- *  call this from selectPlayer / selectBoard before falling through to the
- *  server response. Returning `null` signals "not implemented yet, fall through
- *  to server". The shadow-mode entry point will diff against the server when
- *  this returns a real result. */
-async function jsAnalyzePlayer(_game, _sessionIdx, _playerName) {
-  return null; // Phase 0: no JS analysis implemented yet.
+// ---- Matchpoint calculation ----
+//
+// Direct port of analysis::metrics::player::calculate_matchpoint_pct. For a
+// given result on a board, count what fraction of the OTHER results on that
+// same board it beats (1.0 each) or ties (0.5 each), times 100. Equivalent
+// to ACBL-style matchpoint scoring. Player direction (NS or EW) flips the
+// sign of the comparison so EW gets the opposite of NS's score.
+function calculateMatchpointPct(result, allResults, playerDir /* 'NS' | 'EW' */) {
+  if (allResults.length <= 1) return 50.0;
+  const sign = playerDir === 'NS' ? 1 : -1;
+  const playerScore = sign * (result.score ?? 0);
+  let wins = 0, comparisons = 0;
+  for (const other of allResults) {
+    if (other === result) continue;
+    const otherScore = sign * (other.score ?? 0);
+    comparisons++;
+    if (playerScore > otherScore) wins += 1;
+    else if (playerScore === otherScore) wins += 0.5;
+  }
+  return comparisons > 0 ? (wins / comparisons) * 100.0 : 50.0;
 }
-async function jsAnalyzeBoard(_game, _sessionIdx, _boardNum) {
-  return null; // Phase 0: no JS analysis implemented yet.
+
+/** Iterate every (board, result) pair in a session for convenient walking. */
+function* iterSessionResults(session) {
+  for (const board of session.boards) {
+    for (const result of board.results) {
+      yield { board, result };
+    }
+  }
+}
+
+/** Locate the session inside a NormalizedGame by flattened session_idx. */
+function pickSession(game, sessionIdx) {
+  let i = 0;
+  for (const t of game.tournaments) {
+    for (const e of t.events) {
+      for (const s of e.sessions) {
+        if (i === sessionIdx) return s;
+        i++;
+      }
+    }
+  }
+  return null;
+}
+
+/** Find the partnership direction this player sat in for this result.
+ *  Returns 'NS', 'EW', or null if not in either pair. */
+function playerDirectionInResult(result, playerName) {
+  const norm = normalizeName(playerName);
+  if (result.ns_pair?.players?.some(p => normalizeName(p.name) === norm)) return 'NS';
+  if (result.ew_pair?.players?.some(p => normalizeName(p.name) === norm)) return 'EW';
+  return null;
+}
+
+// ---- Parity (shadow-mode) checks ----
+//
+// Each "compare<X>" function takes the server response and the same input the
+// server saw, runs the JS port over it, and returns an array of mismatches
+// with absolute diff > epsilon. Returns [] when everything matches.
+const PARITY_EPSILON = 0.05; // matchpoint_pct rounded to 2dp on the wire
+
+/** Compare server's per-board matchpoint_pct values for one player against
+ *  the JS port's calculation. */
+function compareMatchpointsForPlayer(serverResp, normalized, sessionIdx, playerName) {
+  const session = pickSession(normalized, sessionIdx);
+  if (!session) return [{ kind: 'no-session', sessionIdx }];
+  const diffs = [];
+  for (const br of serverResp.board_results) {
+    const board = session.boards.find(b => b.number === br.board_number);
+    if (!board) { diffs.push({ kind: 'missing-board', board: br.board_number }); continue; }
+    const myResult = board.results.find(r => playerDirectionInResult(r, playerName) === br.direction);
+    if (!myResult) { diffs.push({ kind: 'no-result-row', board: br.board_number, dir: br.direction }); continue; }
+    const jsMp = calculateMatchpointPct(myResult, board.results, br.direction);
+    if (Math.abs(jsMp - br.matchpoint_pct) > PARITY_EPSILON) {
+      diffs.push({
+        kind: 'mp-mismatch',
+        board: br.board_number,
+        dir: br.direction,
+        server: br.matchpoint_pct,
+        js: jsMp,
+        delta: jsMp - br.matchpoint_pct,
+      });
+    }
+  }
+  return diffs;
+}
+
+/** Compare server's per-table matchpoint_pct (NS + EW analysis) for one
+ *  board against the JS port's calculation. */
+function compareMatchpointsForBoard(serverResp, normalized, sessionIdx, boardNum) {
+  const session = pickSession(normalized, sessionIdx);
+  if (!session) return [{ kind: 'no-session', sessionIdx }];
+  const board = session.boards.find(b => b.number === boardNum);
+  if (!board) return [{ kind: 'missing-board', board: boardNum }];
+  const diffs = [];
+  for (const row of serverResp.results) {
+    // Server returns rows ordered by NS matchpoint % desc; we identify the
+    // matching schema row by NS player names.
+    const r = board.results.find(r =>
+      r.ns_pair.players[0]?.name === row.ns_player1 &&
+      r.ns_pair.players[1]?.name === row.ns_player2
+    );
+    if (!r) { diffs.push({ kind: 'no-result-row', ns: row.ns_pair }); continue; }
+    const jsNs = calculateMatchpointPct(r, board.results, 'NS');
+    const jsEw = calculateMatchpointPct(r, board.results, 'EW');
+    if (Math.abs(jsNs - row.ns_analysis.matchpoint_pct) > PARITY_EPSILON) {
+      diffs.push({
+        kind: 'mp-mismatch', dir: 'NS', ns_pair: row.ns_pair,
+        server: row.ns_analysis.matchpoint_pct, js: jsNs,
+        delta: jsNs - row.ns_analysis.matchpoint_pct,
+      });
+    }
+    if (Math.abs(jsEw - row.ew_analysis.matchpoint_pct) > PARITY_EPSILON) {
+      diffs.push({
+        kind: 'mp-mismatch', dir: 'EW', ns_pair: row.ns_pair,
+        server: row.ew_analysis.matchpoint_pct, js: jsEw,
+        delta: jsEw - row.ew_analysis.matchpoint_pct,
+      });
+    }
+  }
+  return diffs;
+}
+
+/** Run shadow-mode checks for the most recent player response. */
+async function runShadowPlayer(serverResp, playerName) {
+  if (ANALYSIS_ENGINE === 'server') return;
+  try {
+    const normalized = await loadNormalized();
+    const diffs = compareMatchpointsForPlayer(serverResp, normalized, currentSessionIdx, playerName);
+    if (diffs.length === 0) {
+      console.log(`[parity] player "${playerName}" — matchpoints OK across ${serverResp.board_results.length} boards`);
+    } else {
+      console.warn(`[parity] player "${playerName}" — ${diffs.length} matchpoint diff(s):`, diffs);
+    }
+  } catch (e) {
+    console.warn('[parity] player check failed:', e.message);
+  }
+}
+
+/** Run shadow-mode checks for the most recent board response. */
+async function runShadowBoard(serverResp, boardNum) {
+  if (ANALYSIS_ENGINE === 'server') return;
+  try {
+    const normalized = await loadNormalized();
+    const diffs = compareMatchpointsForBoard(serverResp, normalized, currentSessionIdx, boardNum);
+    if (diffs.length === 0) {
+      console.log(`[parity] board ${boardNum} — matchpoints OK across ${serverResp.results.length} tables`);
+    } else {
+      console.warn(`[parity] board ${boardNum} — ${diffs.length} matchpoint diff(s):`, diffs);
+    }
+  } catch (e) {
+    console.warn('[parity] board check failed:', e.message);
+  }
 }
 
 // =========================================================================
@@ -709,7 +852,9 @@ async function selectPlayer(btn, name) {
   try {
     const res = await fetch(`${BASE}/api/player?${sessionParams()}&name=${encodeURIComponent(name)}`);
     if (!res.ok) throw new Error(await res.text());
-    renderPlayer(await res.json());
+    const data = await res.json();
+    renderPlayer(data);
+    runShadowPlayer(data, name);
     // Hide the player grid once results show
     document.getElementById('player-grid').classList.add('hidden');
   } catch (e) { showError(e.message); }
@@ -782,7 +927,9 @@ async function selectBoard(btn, num, keepPlayer) {
   try {
     const res = await fetch(`${BASE}/api/board?${sessionParams()}&num=${num}`);
     if (!res.ok) throw new Error(await res.text());
-    renderBoard(await res.json());
+    const data = await res.json();
+    renderBoard(data);
+    runShadowBoard(data, num);
   } catch (e) { showError(e.message); }
   finally { showLoading(false); }
 }
