@@ -331,6 +331,16 @@ function playerKey(player) {
   return `name:${normalizeName(player.name)}`;
 }
 
+/** Display name: lowercase, then capitalize the first letter of each
+ *  whitespace-separated word. Mirrors PlayerId::display_name() — used so
+ *  "LaFrancesca" round-trips to "Lafrancesca" the same way the server
+ *  normalizes player identity. */
+function displayName(name) {
+  return (name || '').trim().toLowerCase().split(/\s+/).map(w =>
+    w ? w[0].toUpperCase() + w.slice(1) : ''
+  ).join(' ');
+}
+
 /** Fetch the full normalized JSON for the current session. Cached after the
  *  first call so repeated player/board navigations are free. */
 async function loadNormalized() {
@@ -1112,6 +1122,218 @@ function buildCauseContext(board, result, role, direction, boardCtx) {
   };
 }
 
+// ---- Orchestration: analyze_player / analyze_board ----
+//
+// These produce response objects in the same shape the server returns
+// (PlayerAnalysisResponse / BoardAnalysisResponse from web/src/responses.rs).
+// Used directly when ?engine=js, and cross-checked in shadow mode.
+
+/** Find which seat (N/E/S/W) a player sits at in this result, or null. */
+function findPlayerSeat(result, normName) {
+  // ns_pair.players[0] = N, [1] = S; ew_pair.players[0] = W, [1] = E
+  // (see analysis/src/data/builder.rs for the convention).
+  const nNS = result.ns_pair?.players ?? [];
+  const nEW = result.ew_pair?.players ?? [];
+  if (nNS[0] && normalizeName(nNS[0].name) === normName) return 'N';
+  if (nNS[1] && normalizeName(nNS[1].name) === normName) return 'S';
+  if (nEW[0] && normalizeName(nEW[0].name) === normName) return 'W';
+  if (nEW[1] && normalizeName(nEW[1].name) === normName) return 'E';
+  return null;
+}
+
+/** Partner's display name + seat letter from this result, given the player's seat. */
+function partnerOf(result, seat) {
+  switch (seat) {
+    case 'N': return { name: result.ns_pair.players[1]?.name, seat: 'S' };
+    case 'S': return { name: result.ns_pair.players[0]?.name, seat: 'N' };
+    case 'W': return { name: result.ew_pair.players[1]?.name, seat: 'E' };
+    case 'E': return { name: result.ew_pair.players[0]?.name, seat: 'W' };
+    default: return { name: '', seat: null };
+  }
+}
+
+/** Determine the player's role on this result given their seat.
+ *  - Declarer: the player declared
+ *  - Dummy:    the player's PARTNER declared
+ *  - Defender: opponents declared (or PASS) */
+function playerRole(result, seat) {
+  if (!result.contract || result.contract === 'PASS') return 'Defender';
+  const declarer = result.declarer;
+  if (declarer === seat) return 'Declarer';
+  const partner = { N: 'S', S: 'N', E: 'W', W: 'E' }[seat];
+  if (declarer === partner) return 'Dummy';
+  return 'Defender';
+}
+
+/** Build a result string like "4SN+1" / "3NTE=" / "2HS-2" / "Pass".
+ *  Mirrors build_result_string in player.rs. */
+function buildResultString(result) {
+  if (!result.contract || result.contract === 'PASS') return 'Pass';
+  const declCh = result.declarer ?? 'N';
+  const tricks = tricksMade(result);
+  if (tricks == null) return `${result.contract}${declCh}`;
+  const rel = tricks - (levelOf(result.contract) + 6);
+  if (rel === 0) return `${result.contract}${declCh}=`;
+  if (rel > 0) return `${result.contract}${declCh}+${rel}`;
+  return `${result.contract}${declCh}${rel}`;
+}
+
+/** Run the JS analyzer on one player. Returns a PlayerAnalysisResponse-shape
+ *  object, or null if the player has no rows in this session. */
+function jsAnalyzePlayer(game, sessionIdx, playerName) {
+  const session = pickSession(game, sessionIdx);
+  if (!session) return null;
+  const norm = normalizeName(playerName);
+  // Walk every (board, result) and pick out rows where the player sat.
+  const rows = [];
+  let canonicalName = playerName;
+  for (const board of session.boards) {
+    for (const result of board.results) {
+      const seat = findPlayerSeat(result, norm);
+      if (seat) {
+        rows.push({ board, result, seat });
+        const players = (seat === 'N' || seat === 'S' ? result.ns_pair : result.ew_pair).players;
+        const idx = (seat === 'N' || seat === 'W') ? 0 : 1;
+        if (players[idx]?.name) canonicalName = displayName(players[idx].name);
+      }
+    }
+  }
+  if (rows.length === 0) return null;
+
+  const partners = new Set();
+  const seats = new Set();
+  let totalMP = 0;
+  let declCount = 0, declMP = 0;
+  let dummyCount = 0, dummyMP = 0;
+  let defCount = 0, defMP = 0;
+  let dvfSum = 0, dvfCount = 0;
+  let fieldMatchCount = 0;
+  const board_results = [];
+
+  for (const { board, result, seat } of rows) {
+    const direction = (seat === 'N' || seat === 'S') ? 'NS' : 'EW';
+    const role = playerRole(result, seat);
+    const ctx = computeBoardContext(board.results, board.par);
+    const mp = calculateMatchpointPct(result, board.results, direction);
+    const cc = buildCauseContext(board, result, role, direction, ctx);
+    cc.matchpointPct = mp;
+    const { cause, notes } = determineCauseAndNotes(cc);
+    const partner = partnerOf(result, seat);
+
+    seats.add(seat);
+    if (partner.name) partners.add(displayName(partner.name));
+    totalMP += mp;
+    if (role === 'Declarer') { declCount++; declMP += mp;
+      if (cc.declarerVsField != null) { dvfSum += cc.declarerVsField; dvfCount++; }
+    } else if (role === 'Dummy') { dummyCount++; dummyMP += mp; }
+    else { defCount++; defMP += mp; }
+    if (cc.matchedFieldContract) fieldMatchCount++;
+
+    const ns_score = result.score ?? 0;
+    board_results.push({
+      board_number: board.number,
+      direction,
+      seat,
+      partner: displayName(partner.name || ''),
+      contract: result.contract,
+      result_str: buildResultString(result),
+      ns_score,
+      player_score: direction === 'NS' ? ns_score : -ns_score,
+      matchpoint_pct: mp,
+      role,
+      // Server only sets declarer_vs_field on PlayerBoardResult when the
+      // player actually declared; mirror that gate.
+      declarer_vs_field: role === 'Declarer' ? cc.declarerVsField : null,
+      field_contract: ctx.fieldContract,
+      board_type: ctx.boardType,
+      matched_field_contract: cc.matchedFieldContract,
+      cause,
+      notes,
+      bbo_url: null, // LIN URL builder not yet ported.
+    });
+  }
+
+  return {
+    player_name: canonicalName,
+    partners: [...partners].sort(),
+    seats: [...seats].sort(),
+    boards_played: rows.length,
+    boards_declared: declCount,
+    avg_matchpoint_pct: totalMP / rows.length,
+    declaring_mp_pct: declCount > 0 ? declMP / declCount : null,
+    dummy_mp_pct: dummyCount > 0 ? dummyMP / dummyCount : null,
+    defending_mp_pct: defCount > 0 ? defMP / defCount : null,
+    avg_declarer_vs_field: dvfCount > 0 ? dvfSum / dvfCount : null,
+    field_contract_pct: (fieldMatchCount / rows.length) * 100,
+    board_results,
+  };
+}
+
+/** Run the JS analyzer on one board. Returns a BoardAnalysisResponse-shape
+ *  object, or null if the board doesn't exist in the session. */
+function jsAnalyzeBoard(game, sessionIdx, boardNum) {
+  const session = pickSession(game, sessionIdx);
+  if (!session) return null;
+  const board = session.boards.find(b => b.number === boardNum);
+  if (!board) return null;
+  const ctx = computeBoardContext(board.results, board.par);
+  const results = board.results.map(r => {
+    const isPass = !r.contract || r.contract === 'PASS';
+    const declSide = isPass ? null : declaringDirection(r);
+    const nsRole = isPass ? 'Defender' : (declSide === 'NS' ? 'Declarer' : 'Defender');
+    const ewRole = isPass ? 'Defender' : (declSide === 'EW' ? 'Declarer' : 'Defender');
+    const nsMP = calculateMatchpointPct(r, board.results, 'NS');
+    const ewMP = calculateMatchpointPct(r, board.results, 'EW');
+
+    const nsCC = buildCauseContext(board, r, nsRole, 'NS', ctx);
+    nsCC.matchpointPct = nsMP;
+    const ns = determineCauseAndNotes(nsCC);
+
+    const ewCC = buildCauseContext(board, r, ewRole, 'EW', ctx);
+    ewCC.matchpointPct = ewMP;
+    const ew = determineCauseAndNotes(ewCC);
+
+    const ns_p1 = displayName(r.ns_pair.players[0]?.name ?? '');
+    const ns_p2 = displayName(r.ns_pair.players[1]?.name ?? '');
+    const ew_p1 = displayName(r.ew_pair.players[0]?.name ?? '');
+    const ew_p2 = displayName(r.ew_pair.players[1]?.name ?? '');
+    const declarer_name = r.declarer === 'N' ? ns_p1 : r.declarer === 'S' ? ns_p2 :
+                          r.declarer === 'W' ? ew_p1 : r.declarer === 'E' ? ew_p2 : '';
+
+    const dvf = nsCC.declarerVsField; // same value from both perspectives
+    return {
+      ns_pair: `${ns_p1} - ${ns_p2}`,
+      ew_pair: `${ew_p1} - ${ew_p2}`,
+      ns_player1: ns_p1, ns_player2: ns_p2,
+      ew_player1: ew_p1, ew_player2: ew_p2,
+      contract: r.contract,
+      declarer_direction: r.declarer ?? 'N',
+      declarer_name,
+      result_str: buildResultString(r),
+      ns_score: r.score ?? 0,
+      ns_analysis: {
+        matchpoint_pct: nsMP, role: nsRole, declarer_vs_field: dvf,
+        matched_field_contract: nsCC.matchedFieldContract, cause: ns.cause, notes: ns.notes,
+      },
+      ew_analysis: {
+        matchpoint_pct: ewMP, role: ewRole, declarer_vs_field: dvf,
+        matched_field_contract: ewCC.matchedFieldContract, cause: ew.cause, notes: ew.notes,
+      },
+      bbo_url: null,
+    };
+  });
+  // Sort by NS matchpoint % desc — same as the server's analyze_board.
+  results.sort((a, b) => b.ns_analysis.matchpoint_pct - a.ns_analysis.matchpoint_pct);
+  return {
+    board_number: board.number,
+    field_contract: ctx.fieldContract,
+    board_type: ctx.boardType,
+    bbo_url: null,
+    deal_info: null, // Skipped — not yet ported (LIN URL + dealer/vul + par display).
+    results,
+  };
+}
+
 // ---- Parity (shadow-mode) checks ----
 //
 // Each "compare<X>" function takes the server response and the same input the
@@ -1706,11 +1928,18 @@ async function selectPlayer(btn, name) {
   currentPlayerName = name;
   showLoading(true); hideAll(); showError('');
   try {
-    const res = await fetch(`${BASE}/api/player?${sessionParams()}&name=${encodeURIComponent(name)}`);
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
+    let data;
+    if (ANALYSIS_ENGINE === 'js') {
+      const game = await loadNormalized();
+      data = jsAnalyzePlayer(game, currentSessionIdx, name);
+      if (!data) throw new Error(`Player '${name}' not found`);
+    } else {
+      const res = await fetch(`${BASE}/api/player?${sessionParams()}&name=${encodeURIComponent(name)}`);
+      if (!res.ok) throw new Error(await res.text());
+      data = await res.json();
+    }
     renderPlayer(data);
-    runShadowPlayer(data, name);
+    if (ANALYSIS_ENGINE === 'shadow') runShadowPlayer(data, name);
     // Hide the player grid once results show
     document.getElementById('player-grid').classList.add('hidden');
   } catch (e) { showError(e.message); }
@@ -1781,11 +2010,18 @@ async function selectBoard(btn, num, keepPlayer) {
   document.getElementById('player-results').classList.add('hidden');
   showLoading(true); showError('');
   try {
-    const res = await fetch(`${BASE}/api/board?${sessionParams()}&num=${num}`);
-    if (!res.ok) throw new Error(await res.text());
-    const data = await res.json();
+    let data;
+    if (ANALYSIS_ENGINE === 'js') {
+      const game = await loadNormalized();
+      data = jsAnalyzeBoard(game, currentSessionIdx, num);
+      if (!data) throw new Error(`Board ${num} not found`);
+    } else {
+      const res = await fetch(`${BASE}/api/board?${sessionParams()}&num=${num}`);
+      if (!res.ok) throw new Error(await res.text());
+      data = await res.json();
+    }
     renderBoard(data);
-    runShadowBoard(data, num);
+    if (ANALYSIS_ENGINE === 'shadow') runShadowBoard(data, num);
   } catch (e) { showError(e.message); }
   finally { showLoading(false); }
 }
