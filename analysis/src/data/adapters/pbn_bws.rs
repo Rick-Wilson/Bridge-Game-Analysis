@@ -11,7 +11,7 @@ use crate::data::schema::{
     Pair as SchemaPair, Par as SchemaPar, Player as SchemaPlayer, Result as SchemaResult, Session,
     Tournament,
 };
-use crate::data::types::ParsedContract;
+use crate::data::types::{BoardData, ContractResult, ParsedContract, SeatPlayers};
 use crate::error::{AnalysisError, Result};
 use bridge_parsers::bws::{read_bws, BwsData};
 use bridge_parsers::pbn::read_pbn;
@@ -170,16 +170,49 @@ pub fn load_normalized(
                 _ => None,
             };
 
-            let vulnerability = pbn_by_number
-                .get(&board_number)
-                .map(|b| b.vulnerable)
-                .unwrap_or(Vulnerability::None);
+            let pbn_ref = pbn_by_number.get(&board_number);
+            let vulnerability = pbn_ref.map(|b| b.vulnerable).unwrap_or(Vulnerability::None);
             let ns_score = compute_ns_score(
                 contract.as_ref(),
                 tricks_relative,
                 declarer_dir,
                 vulnerability,
             );
+
+            // Build the BBO hand-viewer URL once at adapter time so the
+            // schema's per-result `handviewer_url` is populated. Otherwise
+            // engine=js mode (which reads the schema directly) wouldn't
+            // have an iframe URL to load. We construct a minimal BoardData
+            // and reuse the existing BoardData::bbo_handviewer_url impl
+            // (it only reads deal / dealer / vul / number, not DD or par).
+            let handviewer_url = pbn_ref
+                .filter(|b| b.deal.has_cards())
+                .and_then(|pbn_board| {
+                    let board_data = BoardData {
+                        number: board_number,
+                        dealer: pbn_board.dealer.unwrap_or(Direction::North),
+                        vulnerability,
+                        deal: Some(pbn_board.deal.clone()),
+                        double_dummy: None,
+                        par: Vec::new(),
+                    };
+                    // Apply the same display_name() transform the server's
+                    // /api/board path uses (lowercase + first-letter-cap)
+                    // so the URL matches what the engine=server response
+                    // produces. Otherwise BWS files with mixed-case names
+                    // ("LaFrancesca") encode differently in LIN.
+                    let seat_players = SeatPlayers {
+                        north: title_case(&n_name),
+                        south: title_case(&s_name),
+                        east: title_case(&e_name),
+                        west: title_case(&w_name),
+                    };
+                    let contract_result = contract.as_ref().map(|c| ContractResult {
+                        contract: c.clone(),
+                        declarer: declarer_dir,
+                    });
+                    board_data.bbo_handviewer_url(Some(&seat_players), contract_result.as_ref())
+                });
 
             SchemaResult {
                 contract: contract.as_ref().map(|c| c.display()),
@@ -193,7 +226,7 @@ pub fn load_normalized(
                 ew_pair,
                 auction: None,
                 play: None,
-                handviewer_url: None,
+                handviewer_url,
             }
         };
 
@@ -484,6 +517,25 @@ fn normalize_date(raw: &str) -> String {
     } else {
         date_part.to_string()
     }
+}
+
+/// Mirror of identity::PlayerId::display_name(): lowercase the canonical
+/// form, then capitalize the first letter of each whitespace-separated
+/// word. Applied to player names when building the LIN URL so the
+/// adapter-emitted URL matches what /api/board produces.
+fn title_case(name: &str) -> String {
+    name.trim()
+        .to_lowercase()
+        .split_whitespace()
+        .map(|w| {
+            let mut chars = w.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().chain(chars).collect(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn parse_declarer_direction(ns_ew: &str) -> Direction {

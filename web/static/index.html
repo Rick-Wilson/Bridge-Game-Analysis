@@ -1201,6 +1201,57 @@ function playerRole(result, seat) {
   return 'Defender';
 }
 
+/** Convert a schema Hand to a PBN suit string ("AKQ.JT.987.5432").
+ *  Schema uses "10" for ten; PBN uses "T". Empty suit becomes "".
+ *  Order is S.H.D.C per PBN convention. */
+function handToPBN(hand) {
+  if (!hand) return '...';
+  const conv = r => (r === '10' ? 'T' : r);
+  const fmt = arr => (arr || []).map(conv).join('');
+  return [fmt(hand.S), fmt(hand.H), fmt(hand.D), fmt(hand.C)].join('.');
+}
+
+/** Convert a schema Deal + dealer letter to the PBN deal string
+ *  "<dealer>:<hand1> <hand2> <hand3> <hand4>", clockwise from dealer. */
+function dealToPBN(deal, dealer) {
+  if (!deal) return null;
+  const clockwise = { N: ['N','E','S','W'], E: ['E','S','W','N'],
+                       S: ['S','W','N','E'], W: ['W','N','E','S'] };
+  const seq = clockwise[dealer] || clockwise.N;
+  return `${dealer}:${seq.map(d => handToPBN(deal[d])).join(' ')}`;
+}
+
+/** Render the par contract + optimum score display strings from the
+ *  schema's typed par[]. Mirrors render_par_display in types.rs.
+ *  Note: schema's Par has no tricks field, so the trick suffix
+ *  ("+2"/"=") is omitted. The Rust path derives it from score, but
+ *  porting bridge scoring rules to JS isn't worth the test-phase cost. */
+function renderParDisplayJS(par) {
+  if (!par || par.length === 0) return { contract: null, score: null };
+  const sideOf = d => (d === 'N' || d === 'S') ? 'NS' : 'EW';
+  const contracts = par.map(p => `${sideOf(p.declarer)} ${p.contract}`).join('; ');
+  const first = par[0];
+  const score = first.score >= 0 ? `NS ${first.score}` : `EW ${-first.score}`;
+  return { contract: contracts, score };
+}
+
+/** Build a BoardDealInfo-shape object from a schema board, matching what
+ *  the server's analyze_board response produces. Returns null when the
+ *  source had no deal data — the SPA's hand viewer hides itself in that
+ *  case. */
+function buildDealInfo(board) {
+  if (!board.deal) return null;
+  const { contract: parContract, score: optimumScore } =
+    renderParDisplayJS(board.par || []);
+  return {
+    pbn: dealToPBN(board.deal, board.dealer),
+    dealer: board.dealer,
+    vulnerability: board.vulnerability,
+    par_contract: parContract,
+    optimum_score: optimumScore,
+  };
+}
+
 /** Build a result string like "4SN+1" / "3NTE=" / "2HS-2" / "Pass".
  *  Mirrors build_result_string in player.rs. */
 function buildResultString(result) {
@@ -1355,17 +1406,22 @@ function jsAnalyzeBoard(game, sessionIdx, boardNum) {
         matchpoint_pct: ewMP, role: ewRole, declarer_vs_field: dvf,
         matched_field_contract: ewCC.matchedFieldContract, cause: ew.cause, notes: ew.notes,
       },
-      bbo_url: null,
+      // The schema's per-row handviewer_url is populated by every adapter
+      // (extension and the BWS+PBN adapter), so we just pass it through.
+      bbo_url: r.handviewer_url ?? null,
     };
   });
   // Sort by NS matchpoint % desc — same as the server's analyze_board.
   results.sort((a, b) => b.ns_analysis.matchpoint_pct - a.ns_analysis.matchpoint_pct);
+  // Server's BoardAnalysisResponse.bbo_url is the first row's URL as a
+  // board-level default (used when no row has rendered yet).
+  const boardBbo = results.find(r => r.bbo_url)?.bbo_url ?? null;
   return {
     board_number: board.number,
     field_contract: ctx.fieldContract,
     board_type: ctx.boardType,
-    bbo_url: null,
-    deal_info: null, // Skipped — not yet ported (LIN URL + dealer/vul + par display).
+    bbo_url: boardBbo,
+    deal_info: buildDealInfo(board),
     results,
   };
 }
