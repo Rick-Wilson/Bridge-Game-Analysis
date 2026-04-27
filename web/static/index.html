@@ -699,11 +699,25 @@ function boardTypeEquivalent(serverBT, jsBT, allResults) {
   const srvArgs = argsOf(serverBT);
   const jsArgs = argsOf(jsBT);
   if (kindOf(serverBT) === 'Strain choice') {
-    // Order doesn't matter for parity — both pairs name the same two
-    // strains in the same side.
-    return srvArgs.length === 2 && jsArgs.length === 2 &&
-           srvArgs[0] === jsArgs[0] && srvArgs[1] === jsArgs[1] ||
-           srvArgs[0] === jsArgs[1] && srvArgs[1] === jsArgs[0];
+    if (srvArgs.length !== 2 || jsArgs.length !== 2) return false;
+    // Same pair (any order): trivially equivalent.
+    if (srvArgs[0] === jsArgs[0] && srvArgs[1] === jsArgs[1]) return true;
+    if (srvArgs[0] === jsArgs[1] && srvArgs[1] === jsArgs[0]) return true;
+    // Different pair members: equivalent if the position-0 counts and
+    // position-1 counts both tie on some side. The Rust algorithm picks
+    // the top-2 qualifying (count >= 2) strains via a stable sort over
+    // HashMap iteration order, so any pick where positional counts match
+    // server's pick is valid (e.g., S=5, H=3, NT=3 admits both
+    // "(S vs H)" and "(S vs NT)").
+    for (const side of ['NS', 'EW']) {
+      const counts = groupBySideStrain(allResults, side);
+      const get = s => counts.get(s) || 0;
+      const all = [...srvArgs, ...jsArgs];
+      if (!all.every(s => get(s) >= 2)) continue;
+      if (get(srvArgs[0]) === get(jsArgs[0]) && get(srvArgs[1]) === get(jsArgs[1])) return true;
+      if (get(srvArgs[0]) === get(jsArgs[1]) && get(srvArgs[1]) === get(jsArgs[0])) return true;
+    }
+    return false;
   }
   if (kindOf(serverBT) === 'Competitive') {
     if (srvArgs[0] !== jsArgs[0]) return false; // player strain (NS-perspective)
