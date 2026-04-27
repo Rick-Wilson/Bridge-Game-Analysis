@@ -513,6 +513,257 @@ function fieldContractEquivalent(serverField, jsField, counts) {
   return counts.get(serverField) === counts.get(jsField);
 }
 
+// ---- Board-level structural context ----
+//
+// Mirrors the rest of compute_board_context: who declared (per-table and
+// "typically"), competitive structure, board-type classification, and par
+// matching. These are the inputs the cause-analysis decision tree reads.
+
+/** "NS" or "EW" — which partnership this declarer was on. Mirrors
+ *  BoardResult::declaring_direction(). */
+function declaringDirection(result) {
+  switch (result.declarer) {
+    case 'N': case 'S': return 'NS';
+    case 'E': case 'W': return 'EW';
+    default: return null;
+  }
+}
+
+/** Which side typically declares this board, the field-declaring direction,
+ *  and the per-side typically-declares flags. Mirrors the block in
+ *  compute_board_context that filters non-passout results and computes
+ *  ns_typically_declares / ew_typically_declares. */
+function declaringFlags(allResults) {
+  const nonPassout = allResults.filter(r => r.contract && r.contract !== 'PASS');
+  const total = nonPassout.length;
+  const ns = nonPassout.filter(r => declaringDirection(r) === 'NS').length;
+  const ew = total - ns;
+  const nsTypically = total > 0 && ns * 2 > total;
+  const ewTypically = total > 0 && ew * 2 > total;
+  let fieldDir = null;
+  if (nsTypically) fieldDir = 'NS';
+  else if (ewTypically) fieldDir = 'EW';
+  return { nsTypicallyDeclares: nsTypically, ewTypicallyDeclares: ewTypically,
+           fieldDeclaringDirection: fieldDir };
+}
+
+/** Per-side competitive info: when both sides have a primary strain and the
+ *  strains differ, the board is competitive. Mirrors compute_competitive_info.
+ *  Returns null when one side lacks a primary strain (≥ 2 tables) or both
+ *  primaries are the same strain. */
+function computeCompetitiveInfo(allResults, playerDir /* 'NS' | 'EW' */) {
+  const nsStrains = new Map(); // strain → { count, maxLevel }
+  const ewStrains = new Map();
+  for (const r of allResults) {
+    if (!r.contract || r.contract === 'PASS') continue;
+    const strain = extractStrain(r.contract);
+    const level = parseInt(r.contract[0], 10);
+    const dir = declaringDirection(r);
+    const map = dir === 'NS' ? nsStrains : ewStrains;
+    const cur = map.get(strain) || { count: 0, maxLevel: 0 };
+    cur.count++;
+    cur.maxLevel = Math.max(cur.maxLevel, level);
+    map.set(strain, cur);
+  }
+  const primary = (m) => {
+    let best = null, bestCount = 0;
+    for (const [strain, { count, maxLevel }] of m) {
+      if (count >= 2 && count > bestCount) { best = { strain, maxLevel }; bestCount = count; }
+    }
+    return best;
+  };
+  const nsP = primary(nsStrains);
+  const ewP = primary(ewStrains);
+  if (!nsP || !ewP || nsP.strain === ewP.strain) return null;
+  if (playerDir === 'NS') {
+    return { playerStrain: nsP.strain, playerMaxLevel: nsP.maxLevel,
+             oppStrain: ewP.strain, oppMaxLevel: ewP.maxLevel };
+  }
+  return { playerStrain: ewP.strain, playerMaxLevel: ewP.maxLevel,
+           oppStrain: nsP.strain, oppMaxLevel: nsP.maxLevel };
+}
+
+/** True if the contract is at game level or higher for its strain.
+ *  Mirrors is_game_level: 5C, 5D, 4H, 4S, 3NT and above. */
+function isGameLevel(contract) {
+  if (!contract || contract === 'PASS') return false;
+  const level = parseInt(contract[0], 10);
+  const s = extractStrain(contract);
+  if (s === 'C' || s === 'D') return level >= 5;
+  if (s === 'H' || s === 'S') return level >= 4;
+  if (s === 'NT') return level >= 3;
+  return false;
+}
+
+/** Classify the board's primary structural feature. Mirrors classify_board:
+ *  Competitive > Slam vs Game > Game vs Partscore > Strain Choice > Flat.
+ *  Each level requires ≥ 2 tables on each side of a split. Returns the same
+ *  display string as the Rust BoardType::Display impl. */
+function classifyBoard(allResults, competitiveNs) {
+  if (competitiveNs) {
+    return `Competitive (${competitiveNs.playerStrain} vs ${competitiveNs.oppStrain})`;
+  }
+  // Per-strain (slam, game, partscore) tallies.
+  const byStrain = new Map();
+  for (const r of allResults) {
+    if (!r.contract || r.contract === 'PASS') continue;
+    const s = extractStrain(r.contract);
+    const level = parseInt(r.contract[0], 10);
+    const cur = byStrain.get(s) || { slam: 0, game: 0, ps: 0 };
+    if (level >= 6) cur.slam++;
+    else if (isGameLevel(r.contract)) cur.game++;
+    else cur.ps++;
+    byStrain.set(s, cur);
+  }
+  // 2. Slam vs Game
+  let svgPick = null;
+  for (const [strain, c] of byStrain) {
+    if (c.slam >= 2 && (c.game + c.ps) >= 2) {
+      if (!svgPick || c.slam > svgPick.slam) svgPick = { strain, slam: c.slam };
+    }
+  }
+  if (svgPick) return `Slam vs Game (${svgPick.strain})`;
+  // 3. Game vs Partscore
+  let gvpPick = null;
+  for (const [strain, c] of byStrain) {
+    if (c.game >= 2 && c.ps >= 2) {
+      if (!gvpPick || c.game > gvpPick.game) gvpPick = { strain, game: c.game };
+    }
+  }
+  if (gvpPick) return `Game vs Partscore (${gvpPick.strain})`;
+  // 4. Strain Choice (same-side, multiple strains each with ≥ 2 tables)
+  for (const sideMap of [groupBySideStrain(allResults, 'NS'), groupBySideStrain(allResults, 'EW')]) {
+    const qualifying = [...sideMap.entries()].filter(([_, c]) => c >= 2);
+    if (qualifying.length >= 2) {
+      qualifying.sort((a, b) => b[1] - a[1]);
+      return `Strain choice (${qualifying[0][0]} vs ${qualifying[1][0]})`;
+    }
+  }
+  return 'Flat';
+}
+
+/** Returns true when two board-type strings are equivalent under the
+ *  same-kind classification, even if they made different tie-break choices.
+ *  Rust's max_by_key on a HashMap is non-deterministic on ties, so the
+ *  parity check has to tolerate a strain-pick disagreement when both are
+ *  valid choices from a tied set.
+ *
+ *  Strain choice: ignore order — "(S vs H)" and "(H vs S)" are equivalent.
+ *  Competitive: equivalent if either disagreeing strain tied for the
+ *    primary on its side (≥ 2 occurrences and the max count there).
+ *  Slam vs Game / Game vs Partscore: equivalent if both strains tied for
+ *    the max in their category.
+ */
+function boardTypeEquivalent(serverBT, jsBT, allResults) {
+  if (serverBT === jsBT) return true;
+  if (!serverBT || !jsBT) return false;
+  // Same kind (prefix before the parenthesized strain pair) is required.
+  const kindOf = s => s.replace(/\s*\(.*\)$/, '').trim();
+  if (kindOf(serverBT) !== kindOf(jsBT)) return false;
+  const argsOf = s => {
+    const m = s.match(/\(([^)]*)\)/);
+    return m ? m[1].split(/\s+vs\s+/).map(x => x.trim()) : [];
+  };
+  const srvArgs = argsOf(serverBT);
+  const jsArgs = argsOf(jsBT);
+  if (kindOf(serverBT) === 'Strain choice') {
+    // Order doesn't matter for parity — both pairs name the same two
+    // strains in the same side.
+    return srvArgs.length === 2 && jsArgs.length === 2 &&
+           srvArgs[0] === jsArgs[0] && srvArgs[1] === jsArgs[1] ||
+           srvArgs[0] === jsArgs[1] && srvArgs[1] === jsArgs[0];
+  }
+  if (kindOf(serverBT) === 'Competitive') {
+    if (srvArgs[0] !== jsArgs[0]) return false; // player strain (NS-perspective)
+    // Opponent (EW) strain disagreement is OK if either choice tied for
+    // primary on the EW side.
+    const ewMap = new Map();
+    for (const r of allResults) {
+      if (!r.contract || r.contract === 'PASS') continue;
+      if (declaringDirection(r) !== 'EW') continue;
+      const s = extractStrain(r.contract);
+      ewMap.set(s, (ewMap.get(s) || 0) + 1);
+    }
+    const counts = [srvArgs[1], jsArgs[1]].map(s => ewMap.get(s) || 0);
+    return counts[0] === counts[1] && counts[0] >= 2;
+  }
+  if (kindOf(serverBT) === 'Slam vs Game' || kindOf(serverBT) === 'Game vs Partscore') {
+    // Both single-strain classifications — counts must tie in the relevant
+    // bucket for the disagreement to be a tie-break, not a real diff.
+    const slot = kindOf(serverBT) === 'Slam vs Game' ? 'slam' : 'game';
+    const tally = new Map();
+    for (const r of allResults) {
+      if (!r.contract || r.contract === 'PASS') continue;
+      const s = extractStrain(r.contract);
+      const lvl = parseInt(r.contract[0], 10);
+      const cur = tally.get(s) || { slam: 0, game: 0, ps: 0 };
+      if (lvl >= 6) cur.slam++;
+      else if (isGameLevel(r.contract)) cur.game++;
+      else cur.ps++;
+      tally.set(s, cur);
+    }
+    const a = (tally.get(srvArgs[0]) || { [slot]: 0 })[slot];
+    const b = (tally.get(jsArgs[0]) || { [slot]: 0 })[slot];
+    return a === b;
+  }
+  return false;
+}
+
+/** Helper for classifyBoard: per-side strain count map. */
+function groupBySideStrain(allResults, side) {
+  const map = new Map();
+  for (const r of allResults) {
+    if (!r.contract || r.contract === 'PASS') continue;
+    if (declaringDirection(r) !== side) continue;
+    const s = extractStrain(r.contract);
+    map.set(s, (map.get(s) || 0) + 1);
+  }
+  return map;
+}
+
+/** True when the actual contract is a par contract for the declaring side.
+ *  Same side + same level + same strain (ignores doubled). Mirrors
+ *  contract_matches_par(). With multiple par entries (ties), matching any
+ *  one counts. */
+function contractMatchesPar(actualContract, declarerIsNs, parArray) {
+  if (!actualContract || actualContract === 'PASS') return false;
+  const aLvl = actualContract[0];
+  const aStrain = extractStrain(actualContract);
+  for (const p of parArray) {
+    const pIsNs = p.declarer === 'N' || p.declarer === 'S';
+    if (pIsNs !== declarerIsNs) continue;
+    const pLvl = p.contract[0];
+    const pStrain = extractStrain(p.contract);
+    if (aLvl === pLvl && aStrain === pStrain) return true;
+  }
+  return false;
+}
+
+/** Compute the full BoardContext-equivalent for a board. Inputs are the
+ *  per-board result list (from session.boards[i].results) and the par array
+ *  (board.par). Mirrors compute_board_context's output shape, JS-side. */
+function computeBoardContext(allResults, parArray) {
+  const counts = fieldContractCounts(allResults);
+  const fc = fieldContract(allResults);
+  const flags = declaringFlags(allResults);
+  const competitiveNs = computeCompetitiveInfo(allResults, 'NS');
+  const competitiveEw = computeCompetitiveInfo(allResults, 'EW');
+  const boardType = classifyBoard(allResults, competitiveNs);
+  const trickAvgs = fieldTrickAverages(allResults);
+  return {
+    fieldContract: fc,
+    fieldContractCounts: counts,
+    fieldTrickAverages: trickAvgs,
+    boardType,
+    competitiveNs,
+    competitiveEw,
+    nsTypicallyDeclares: flags.nsTypicallyDeclares,
+    ewTypicallyDeclares: flags.ewTypicallyDeclares,
+    fieldDeclaringDirection: flags.fieldDeclaringDirection,
+    par: parArray || [],
+  };
+}
+
 // ---- Parity (shadow-mode) checks ----
 //
 // Each "compare<X>" function takes the server response and the same input the
@@ -555,16 +806,25 @@ function compareMatchpointsForPlayer(serverResp, normalized, sessionIdx, playerN
         js: jsDvF,
       });
     }
-    // Field contract: tolerate ties (server's HashMap iteration is
-    // non-deterministic when multiple contracts share the max count).
-    const counts = fieldContractCounts(board.results);
-    const jsField = fieldContract(board.results);
+    // Full board context (field contract, board type, declarer flags, ...).
+    const ctx = computeBoardContext(board.results, board.par);
+    const counts = ctx.fieldContractCounts;
+    const jsField = ctx.fieldContract;
     if (!fieldContractEquivalent(br.field_contract, jsField, counts)) {
       diffs.push({
         kind: 'field-contract-mismatch',
         board: br.board_number,
         server: br.field_contract,
         js: jsField,
+      });
+    }
+    // board_type parity (PlayerBoardResultResponse exposes a per-board board_type)
+    if (!boardTypeEquivalent(br.board_type, ctx.boardType, board.results)) {
+      diffs.push({
+        kind: 'board-type-mismatch',
+        board: br.board_number,
+        server: br.board_type,
+        js: ctx.boardType,
       });
     }
     if (matchedFieldContract(myResult.contract, jsField) !== br.matched_field_contract) {
@@ -599,15 +859,24 @@ function compareMatchpointsForBoard(serverResp, normalized, sessionIdx, boardNum
   const board = session.boards.find(b => b.number === boardNum);
   if (!board) return [{ kind: 'missing-board', board: boardNum }];
   const diffs = [];
-  // Top-level field_contract on the BoardAnalysis response.
-  const counts = fieldContractCounts(board.results);
-  const jsField = fieldContract(board.results);
+  // Full BoardContext mirror, used for field_contract + board_type checks.
+  const ctx = computeBoardContext(board.results, board.par);
+  const counts = ctx.fieldContractCounts;
+  const jsField = ctx.fieldContract;
   if (!fieldContractEquivalent(serverResp.field_contract, jsField, counts)) {
     diffs.push({
       kind: 'field-contract-mismatch',
       board: boardNum,
       server: serverResp.field_contract,
       js: jsField,
+    });
+  }
+  if (!boardTypeEquivalent(serverResp.board_type, ctx.boardType, board.results)) {
+    diffs.push({
+      kind: 'board-type-mismatch',
+      board: boardNum,
+      server: serverResp.board_type,
+      js: ctx.boardType,
     });
   }
   for (const row of serverResp.results) {
