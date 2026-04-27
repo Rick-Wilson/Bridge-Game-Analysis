@@ -9,7 +9,8 @@ use crate::data::schema::{
     self, Hand as SchemaHand, NormalizedGame, Pair as SchemaPair, Session as SchemaSession,
 };
 use crate::data::types::{
-    BoardData, BoardResult, DdStrains, DoubleDummyTricks, GameData, ParContract, ParsedContract,
+    BoardData, BoardResult, ContractResult, DdStrains, DoubleDummyTricks, GameData, ParContract,
+    ParsedContract, SeatPlayers,
 };
 use crate::error::{AnalysisError, Result};
 use crate::identity::{Partnership, PlayerId};
@@ -389,6 +390,99 @@ fn direction_to_char(d: Direction) -> char {
         Direction::East => 'E',
         Direction::South => 'S',
         Direction::West => 'W',
+    }
+}
+
+/// Title-case a name: lowercase everything, then capitalize the first letter
+/// of each whitespace-separated word. Mirrors PlayerId::display_name() so the
+/// LIN URL we build matches what /api/board's response builder produces.
+fn title_case(name: &str) -> String {
+    name.trim()
+        .to_lowercase()
+        .split_whitespace()
+        .map(|w| {
+            let mut chars = w.chars();
+            match chars.next() {
+                None => String::new(),
+                Some(c) => c.to_uppercase().chain(chars).collect(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Walk every result in a NormalizedGame and replace `handviewer_url` with
+/// a canonical BBO LIN URL built from the deal, contract, declarer, and
+/// player names. The canonical URL includes a constructed auction
+/// (passes-from-dealer-to-declarer, the contract bid, then closing
+/// passes/X/XX) so the BBO viewer renders the bidding sequence — adapter-
+/// supplied URLs (e.g. ACBL Live's "play this hand" link, lifted by the
+/// extension) often only encode the deal and let BBO render auto-computed
+/// par/DD analysis instead.
+///
+/// Called by /api/upload-normalized before persisting data.json so every
+/// request that reads the schema (engine=js, /api/normalized streaming,
+/// /api/board response builder) sees the canonical URL.
+pub fn enrich_handviewer_urls(game: &mut NormalizedGame) {
+    for tournament in &mut game.tournaments {
+        for event in &mut tournament.events {
+            for session in &mut event.sessions {
+                for board in &mut session.boards {
+                    let dealer = match parse_direction(&board.dealer) {
+                        Some(d) => d,
+                        None => continue,
+                    };
+                    let vulnerability = Vulnerability::from_pbn(&board.vulnerability)
+                        .unwrap_or(Vulnerability::None);
+                    let deal = match board.deal.as_ref().and_then(convert_deal) {
+                        Some(d) => d,
+                        None => continue,
+                    };
+                    let bd = BoardData {
+                        number: board.number,
+                        dealer,
+                        vulnerability,
+                        deal: Some(deal),
+                        double_dummy: None,
+                        par: Vec::new(),
+                    };
+                    for result in &mut board.results {
+                        let n = result.ns_pair.players.first().map(|p| title_case(&p.name));
+                        let s = result.ns_pair.players.get(1).map(|p| title_case(&p.name));
+                        let w = result.ew_pair.players.first().map(|p| title_case(&p.name));
+                        let e = result.ew_pair.players.get(1).map(|p| title_case(&p.name));
+                        let players = match (n, s, e, w) {
+                            (Some(n), Some(s), Some(e), Some(w)) => Some(SeatPlayers {
+                                north: n,
+                                south: s,
+                                east: e,
+                                west: w,
+                            }),
+                            _ => None,
+                        };
+                        let contract_result = match (
+                            result
+                                .contract
+                                .as_deref()
+                                .filter(|c| !c.is_empty() && *c != "PASS")
+                                .and_then(ParsedContract::parse),
+                            result.declarer.as_deref().and_then(parse_direction),
+                        ) {
+                            (Some(c), Some(d)) => Some(ContractResult {
+                                contract: c,
+                                declarer: d,
+                            }),
+                            _ => None,
+                        };
+                        if let Some(url) =
+                            bd.bbo_handviewer_url(players.as_ref(), contract_result.as_ref())
+                        {
+                            result.handviewer_url = Some(url);
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

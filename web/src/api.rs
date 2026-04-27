@@ -281,6 +281,22 @@ pub async fn upload_normalized(
         (code, e.to_string())
     })?;
 
+    // Adapter-emitted handviewer_urls (e.g. ACBL Live's "play this hand"
+    // link, lifted by the extension) often render only the deal — no
+    // auction. Override every result's URL with one built from the
+    // schema's deal + contract + declarer + players via the same Rust
+    // function the BWS adapter uses, so the BBO viewer shows our
+    // constructed auction (passes-to-declarer, contract bid, closing
+    // passes / X / XX).
+    let mut normalized = normalized;
+    bridge_club_analysis::enrich_handviewer_urls(&mut normalized);
+    let body_str = serde_json::to_string(&normalized).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to re-serialize after enrichment: {}", e),
+        )
+    })?;
+
     let session_list = bridge_club_analysis::build_sessions(&normalized, None).map_err(|e| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -304,7 +320,7 @@ pub async fn upload_normalized(
             format!("Failed to create session dir: {}", e),
         )
     })?;
-    std::fs::write(session_dir.join("data.json"), body_str).map_err(|e| {
+    std::fs::write(session_dir.join("data.json"), &body_str).map_err(|e| {
         (
             StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to persist data.json: {}", e),
