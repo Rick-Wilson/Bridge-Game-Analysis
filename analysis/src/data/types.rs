@@ -22,9 +22,66 @@ impl ParsedContract {
         }
     }
 
-    /// Parse from a contract string like "3NT", "4S", "2HX"
+    /// Parse from a contract string. Accepts both the canonical no-space
+    /// form ("3NT", "4S", "2HX", "6NTXX") and the space-separated form
+    /// ("3 NT", "4 S", "2 H X") that the upstream bridge_parsers parser
+    /// requires.
+    ///
+    /// The canonical form is what the schema specifies and what
+    /// `display()` emits, so it must round-trip through the schema. We
+    /// try canonical first; if that fails we fall through to the
+    /// upstream parser for legacy / human-typed input.
     pub fn parse(s: &str) -> Option<Self> {
+        if let Some(c) = Self::parse_canonical(s) {
+            return Some(c);
+        }
         Contract::parse(s).map(|c| Self::from_contract(&c))
+    }
+
+    /// Strict parser for the schema's canonical contract string:
+    /// `{1-7}{C|D|H|S|NT}{X|XX}?`. Returns None for any deviation; the
+    /// public `parse` falls back to the looser upstream parser.
+    fn parse_canonical(s: &str) -> Option<Self> {
+        let s = s.trim();
+        let bytes = s.as_bytes();
+        if bytes.is_empty() {
+            return None;
+        }
+        // Level: single ASCII digit 1-7.
+        let level_byte = *bytes.first()?;
+        if !level_byte.is_ascii_digit() {
+            return None;
+        }
+        let level = level_byte - b'0';
+        if !(1..=7).contains(&level) {
+            return None;
+        }
+        let rest = &s[1..];
+        let (strain, after) = if let Some(stripped) = rest.strip_prefix("NT") {
+            (Strain::NoTrump, stripped)
+        } else {
+            let ch = rest.chars().next()?;
+            let strain = match ch {
+                'C' => Strain::Clubs,
+                'D' => Strain::Diamonds,
+                'H' => Strain::Hearts,
+                'S' => Strain::Spades,
+                'N' => Strain::NoTrump, // bare "N" — tolerate; "NT" already handled above
+                _ => return None,
+            };
+            (strain, &rest[ch.len_utf8()..])
+        };
+        let doubled = match after {
+            "" => Doubled::None,
+            "X" => Doubled::Doubled,
+            "XX" => Doubled::Redoubled,
+            _ => return None,
+        };
+        Some(Self {
+            level,
+            strain,
+            doubled,
+        })
     }
 
     /// Calculate the number of tricks required to make the contract
@@ -659,6 +716,38 @@ impl Default for GameData {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Round-trip test for the canonical contract form. The schema spec
+    /// uses no-space form ("5HX") which the upstream Contract::parse
+    /// rejects — the parse override here has to cover it so doubled
+    /// contracts survive the schema round-trip.
+    #[test]
+    fn parses_canonical_doubled_contracts() {
+        let cases = [
+            ("3NT", 3, Strain::NoTrump, Doubled::None),
+            ("4S", 4, Strain::Spades, Doubled::None),
+            ("5HX", 5, Strain::Hearts, Doubled::Doubled),
+            ("4SX", 4, Strain::Spades, Doubled::Doubled),
+            ("6CXX", 6, Strain::Clubs, Doubled::Redoubled),
+            ("7NTXX", 7, Strain::NoTrump, Doubled::Redoubled),
+            ("2DX", 2, Strain::Diamonds, Doubled::Doubled),
+        ];
+        for (s, lvl, st, db) in cases {
+            let p = ParsedContract::parse(s).unwrap_or_else(|| panic!("failed to parse {s}"));
+            assert_eq!(p.level, lvl, "level for {s}");
+            assert_eq!(p.strain, st, "strain for {s}");
+            assert_eq!(p.doubled, db, "doubled for {s}");
+            // display() must round-trip back to the same canonical form
+            assert_eq!(p.display(), s, "display round-trip for {s}");
+        }
+    }
+
+    #[test]
+    fn rejects_invalid_canonical_contracts() {
+        for s in ["", "0NT", "8H", "3Q", "3NTQ", "3HXY", "abc"] {
+            assert!(ParsedContract::parse(s).is_none(), "should reject {s:?}");
+        }
+    }
 
     /// PBN's 20-char DD layout is N,S,E,W × NT,S,H,D,C. The string
     /// "abcd9 abcd9 12345 67890" (spaces only here for clarity) means:
