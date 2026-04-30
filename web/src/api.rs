@@ -256,7 +256,6 @@ pub async fn list_sessions(
     Ok(Json(infos))
 }
 
-
 /// Proxy BBA auction requests to avoid CORS issues.
 pub async fn bba_proxy(body: axum::body::Bytes) -> Result<impl IntoResponse, (StatusCode, String)> {
     let client = reqwest::Client::new();

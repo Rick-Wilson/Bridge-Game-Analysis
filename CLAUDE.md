@@ -6,8 +6,7 @@ This file provides guidance to Claude Code when working with this repository.
 
 Club Game Analysis — a tool for bridge players to understand their game results
 board-by-board, categorizing each result by cause (good play, lucky, auction
-error, play error, defense error, unlucky). Available as both a CLI and a web
-application, with two ways to get data into it:
+error, play error, defense error, unlucky). Web app, two input paths:
 
 1. **Upload BWS + PBN files** (the original flow, for ACBLscore/ACBLlive club
    games — drag and drop on the home page).
@@ -15,34 +14,40 @@ application, with two ways to get data into it:
    [bridge-data-extension](../acbl-live-fetch) scrapes the results page and
    hands a normalized JSON document off to the `/analyze` route).
 
-### One analysis path, multiple input adapters
-
-The analyzer's data model is a single common pipeline. Both inputs feed the
-same downstream analysis:
+### Architecture: Rust = file translation, JS = analysis
 
 ```
-                                           ┌─ data/adapters/pbn_bws.rs ─┐
-BWS + PBN files ──────────────────────────►│                            │
-                                           ├─ data/builder.rs ──────────► Vec<SessionData>
-JSON push (acbl-live-fetch extension) ────►│                            │   (one per session)
-                                           └─ data/schema.rs (validates)┘
-                                                                            ↓
-                                                                         analysis (metrics/)
+┌──────────── server (Rust container) ────────────┐    ┌── browser ──┐
+                                                  │    │             │
+BWS + PBN  ──► data/adapters/pbn_bws.rs ──┐       │    │  index.html │
+                                          ├──► normalized JSON ──► JS analyzer
+JSON push ───► data/schema.rs (validate) ─┘   ↑   │    │  (matchpoints,
+                                              │   │    │   DVF, cause
+                          enrich_tricks  ─────┤   │    │   analysis,
+                          enrich_handviewer ──┘   │    │   rendering)
+                                                  │    │             │
+                                  data.json on disk    │             │
+└──────────────────────────────────────────────────┘    └─────────────┘
 ```
+
+The Rust server's job is the **BWS/PBN → JSON translation**, two schema-walk
+enrichment passes (derive missing trick counts from score; replace adapter-
+emitted handviewer URLs with canonical BBO LIN URLs that include a
+constructed auction), and persistence. Everything else — matchpoint
+calculation, declarer-vs-field, cause analysis, all the rendering — runs
+client-side in the SPA's inlined JS.
 
 The boundary is the **normalized JSON schema** documented in
 [`acbl-live-fetch/docs/normalized-schema.md`](../acbl-live-fetch/docs/normalized-schema.md).
-Adapters convert their native format into that schema; everything downstream
-reads only the schema and is unaware of input format. To add a third source
-(BBO LIN, hand-typed data, ...) write a new adapter that emits the schema.
+To add a third source (BBO LIN, hand-typed data, ...) write a new adapter
+that emits the schema.
 
 ### Workspace Crates
 
 | Crate | Binary | Purpose |
 |-------|--------|---------|
-| `analysis/` | (library) | Core engine. Schema types in `data/schema.rs`, JSON→GameData in `data/builder.rs`, BWS+PBN→JSON in `data/adapters/pbn_bws.rs`, analysis in `metrics/` |
-| `cli/` | `bridge-analysis` | Command-line interface (`ba` alias on dev Mac) |
-| `web/` | `bridge-analysis-web` | Axum web server with file upload, JSON ingest, analysis API, admin dashboard |
+| `analysis/` | (library) | Schema types in `data/schema.rs`, BWS+PBN→JSON adapter in `data/adapters/pbn_bws.rs`, schema-walk enrich passes in `data/builder.rs`. (Name "analysis" is historical — the analyzer moved to JS in 2026-04; this crate is now the file-translation layer.) |
+| `web/` | `bridge-analysis-web` | Axum web server: file upload, JSON ingest, name-overrides, BBA proxy, admin dashboard, static SPA serving. Walks the schema directly via `web/src/upload_helpers.rs` to shape upload responses. |
 
 ### Key Dependencies
 
@@ -68,10 +73,8 @@ cargo fmt --all                          # Format all code
 ```bash
 # Run web server locally (serves at http://localhost:3001/)
 cargo run -p bridge-analysis-web
-
-# Run CLI
-cargo run -p bridge-analysis -- player --bws FILE.BWS --pbn FILE.pbn --name "Player Name"
-cargo run -p bridge-analysis -- board --bws FILE.BWS --pbn FILE.pbn --board 1
+# or:
+just dev
 ```
 
 The web server reads `BASE_PATH` env var to nest under a path prefix (default: empty = root).
@@ -178,18 +181,22 @@ The compose file injects these plus static values (`PORT=3001`, `HOST=0.0.0.0`, 
 |--------|------|---------|
 | `GET /` | Serve main SPA page (file-upload entry) |
 | `GET /analyze` | Serve same SPA, but bootstrap reads JSON from `sessionStorage["pending-session"]` (extension entry) |
-| `POST /api/upload` | Upload BWS+PBN files, returns session ID + session metadata + player/board lists |
-| `POST /api/upload-normalized` | Accept normalized JSON in body (extension's POST target). Validates `schema_version` (rejects unknown major versions with 422) |
+| `POST /api/upload` | Upload BWS+PBN files, runs the adapter + enrich passes, persists data.json. Response: session ID + session metadata + counts + per-pair ACBL map |
+| `POST /api/upload-normalized` | Accept normalized JSON in body (extension's POST target). Validates `schema_version` (rejects unknown major versions with 422), enriches, persists |
 | `GET /api/sessions?session=...` | List all sessions in an upload (BWS=1, JSON ingest may be many) |
-| `GET /api/players?session=...&session_idx=...` | Player list for a session |
-| `GET /api/boards?session=...&session_idx=...` | Board-number list for a session |
-| `GET /api/player?session=...&session_idx=...&name=...` | Player analysis JSON |
-| `GET /api/board?session=...&session_idx=...&num=...` | Board analysis JSON with per-row BBO URLs |
-| `POST /api/names?session=...` | Apply ACBL-number → name overrides (session-wide) |
+| `GET /api/normalized?session=...` | Stream the persisted data.json. The browser fetches this once after upload and runs all analysis client-side over it |
+| `POST /api/names?session=...` | Apply ACBL-number → name overrides; mutates data.json in place and re-runs the handviewer-URL enrichment |
 | `POST /api/bba-proxy` | Proxy requests to BBA server (avoids CORS) |
-| `GET /health` | Health check |
+| `GET /healthz` | Service-contract health (`{status, version, uptime_seconds}`); `/health` 308's here |
+| `GET /metrics` | Prometheus text-format metrics |
 | `GET /admin/dashboard?key=...` | Admin analytics dashboard |
 | `GET /admin/api/stats?key=...` | Usage statistics JSON |
+
+The previously-served `/api/players`, `/api/boards`, `/api/player`, `/api/board`
+endpoints (server-side analysis) were removed in 2026-04 when the JS
+analyzer became the only path; the SPA computes those lists and per-player /
+per-board analysis directly from `cachedNormalized` (the result of one
+`/api/normalized` fetch after upload).
 
 `session_idx` defaults to `0` and is omitted from URLs when there's only one
 session (the BWS+PBN case). Multi-session uploads (typical for tournament
@@ -257,16 +264,24 @@ All located at `/Users/rick/Development/GitHub/`:
 The normalized JSON schema is owned by [`acbl-live-fetch/docs/normalized-schema.md`](../acbl-live-fetch/docs/normalized-schema.md).
 When the schema changes, both repos must move together:
 
-- analyzer: update `analysis/src/data/schema.rs` (serde types) and
-  `analysis/src/data/builder.rs` (schema → GameData conversion). Bump
+- server: update `analysis/src/data/schema.rs` (serde types). Bump
   `SUPPORTED_MAJOR` only on a breaking change.
+- server: if the change affects fields `analysis/src/data/builder.rs`'s
+  enrich passes (`enrich_tricks`, `enrich_handviewer_urls`) read or
+  write, update those.
+- server's BWS adapter (`analysis/src/data/adapters/pbn_bws.rs`) emits
+  the same schema; update it too if the change affects fields the
+  adapter writes.
+- web's upload helpers (`web/src/upload_helpers.rs`) walk the schema
+  for the upload response shape; update if a relevant field changes.
+- SPA: the JS analyzer in `web/static/index.html` reads the schema
+  directly. Update its derive functions and renderers to match.
 - extension: update its emitter and the doc's worked example.
-- analyzer's BWS adapter (`analysis/src/data/adapters/pbn_bws.rs`) emits the
-  same schema; update it too if the change affects fields the adapter writes.
 
-Validate end-to-end with `cargo test` (analyzer) + `npm test` (extension). The
-analyzer enforces `schema_version` major-version compatibility — unknown major
-versions return 422 from `/api/upload-normalized`.
+Validate end-to-end with `cargo test --all` (server) + `npm test`
+(extension). The server enforces `schema_version` major-version
+compatibility — unknown major versions return 422 from
+`/api/upload-normalized`.
 
 ## Notifications
 
