@@ -84,16 +84,13 @@ async fn main() {
         .allow_methods([Method::GET, Method::POST])
         .allow_headers(tower_http::cors::Any);
 
-    // API routes
+    // API routes. Analysis endpoints (/players, /boards, /player, /board)
+    // were removed when the JS-side analyzer became the only path.
     let api_routes = Router::new()
         .route("/upload", post(api::upload_files))
         .route("/upload-normalized", post(api::upload_normalized))
         .route("/sessions", get(api::list_sessions))
         .route("/normalized", get(api::get_normalized))
-        .route("/players", get(api::list_players))
-        .route("/boards", get(api::list_boards))
-        .route("/player", get(api::analyze_player))
-        .route("/board", get(api::analyze_board))
         .route("/bba-proxy", post(api::bba_proxy))
         .route("/names", post(api::update_names));
 
