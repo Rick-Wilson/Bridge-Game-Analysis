@@ -1,0 +1,21 @@
+target
+data
+logs
+uploads
+.env
+.git
+.github
+.gitignore
+.dockerignore
+.DS_Store
+# .cargo/config.toml has [patch] overrides pointing at sister directories
+# that don't exist inside the build context. Excluded so the container
+# build always uses the git URLs declared in Cargo.toml.
+.cargo
+README.md
+LICENSE
+docker-compose.yml
+justfile
+analysis/examples
+analysis/tests
+activity-log.json
