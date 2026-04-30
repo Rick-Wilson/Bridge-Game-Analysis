@@ -17,7 +17,7 @@
 //! All functions here work over the schema types directly. No bridge-
 //! domain analysis happens — that's the JS port's job.
 
-use bridge_club_analysis::data::schema::{NormalizedGame, Pair, Player, Session};
+use parse_files::data::schema::{NormalizedGame, Pair, Player, Session};
 use std::collections::{HashMap, HashSet};
 
 use crate::responses::MissingPlayerInfo;

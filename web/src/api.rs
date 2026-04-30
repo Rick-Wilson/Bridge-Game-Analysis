@@ -134,7 +134,7 @@ pub async fn upload_files(
     // handviewer URLs with canonical BBO URLs that include a constructed
     // auction). After this, everything downstream works off the schema
     // alone — the JS analyzer in the SPA reads the same JSON.
-    let mut normalized = bridge_club_analysis::data::adapters::pbn_bws::load_normalized(
+    let mut normalized = parse_files::data::adapters::pbn_bws::load_normalized(
         &bws_path,
         pbn_path.as_deref(),
         None,
@@ -145,8 +145,8 @@ pub async fn upload_files(
             format!("Failed to parse files: {}", e),
         )
     })?;
-    bridge_club_analysis::enrich_tricks(&mut normalized);
-    bridge_club_analysis::enrich_handviewer_urls(&mut normalized);
+    parse_files::enrich_tricks(&mut normalized);
+    parse_files::enrich_handviewer_urls(&mut normalized);
     persist_data_json(&session_dir, &normalized)?;
 
     let response = build_upload_response(
@@ -185,9 +185,9 @@ pub async fn upload_normalized(
     })?;
 
     // Parse + version-check first so we never write garbage to disk.
-    let mut normalized = bridge_club_analysis::parse_normalized(body_str).map_err(|e| {
+    let mut normalized = parse_files::parse_normalized(body_str).map_err(|e| {
         let code = match e {
-            bridge_club_analysis::SchemaParseError::UnsupportedMajor { .. } => {
+            parse_files::SchemaParseError::UnsupportedMajor { .. } => {
                 StatusCode::UNPROCESSABLE_ENTITY
             }
             _ => StatusCode::BAD_REQUEST,
@@ -198,8 +198,8 @@ pub async fn upload_normalized(
     // Derive missing trick counts from score; replace adapter-supplied
     // handviewer URLs with canonical BBO URLs (constructed auction from
     // passes-to-declarer + contract + closing passes / X / XX).
-    bridge_club_analysis::enrich_tricks(&mut normalized);
-    bridge_club_analysis::enrich_handviewer_urls(&mut normalized);
+    parse_files::enrich_tricks(&mut normalized);
+    parse_files::enrich_handviewer_urls(&mut normalized);
 
     if upload_helpers::flatten_sessions(&normalized).is_empty() {
         return Err((
@@ -323,7 +323,7 @@ pub async fn update_names(
     let applied = upload_helpers::apply_name_overrides(&mut game, &overrides);
     if applied > 0 {
         // Names appear in the constructed BBO handviewer URLs; rebuild them.
-        bridge_club_analysis::enrich_handviewer_urls(&mut game);
+        parse_files::enrich_handviewer_urls(&mut game);
     }
     persist_data_json(&session_dir, &game)?;
 
@@ -431,14 +431,14 @@ fn resolve_session_dir(
 /// Read the persisted normalized JSON for a session.
 fn read_data_json(
     session_dir: &std::path::Path,
-) -> Result<bridge_club_analysis::NormalizedGame, (StatusCode, String)> {
+) -> Result<parse_files::NormalizedGame, (StatusCode, String)> {
     let body = std::fs::read_to_string(session_dir.join("data.json")).map_err(|_| {
         (
             StatusCode::NOT_FOUND,
             "Session has no data.json (uploaded before the schema-only refactor?)".to_string(),
         )
     })?;
-    bridge_club_analysis::parse_normalized(&body).map_err(|e| {
+    parse_files::parse_normalized(&body).map_err(|e| {
         (
             StatusCode::UNPROCESSABLE_ENTITY,
             format!("Invalid normalized JSON in session: {}", e),
@@ -449,7 +449,7 @@ fn read_data_json(
 /// Serialize and persist the normalized JSON for a session.
 fn persist_data_json(
     session_dir: &std::path::Path,
-    game: &bridge_club_analysis::NormalizedGame,
+    game: &parse_files::NormalizedGame,
 ) -> Result<(), (StatusCode, String)> {
     let body = serde_json::to_string(game).map_err(|e| {
         (
@@ -471,7 +471,7 @@ fn persist_data_json(
 #[allow(clippy::too_many_arguments)]
 fn build_upload_response(
     session_id: String,
-    game: &bridge_club_analysis::NormalizedGame,
+    game: &parse_files::NormalizedGame,
     has_pbn: bool,
     state: &AppState,
     anon_ip: &str,

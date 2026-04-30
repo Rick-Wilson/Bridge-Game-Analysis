@@ -14,23 +14,23 @@ WORKDIR /workspace
 # src/, run a dummy build to populate target/. When only service code
 # changes, this layer stays cached and the dummy build doesn't re-run.
 COPY Cargo.toml Cargo.lock ./bridge-analysis/
-COPY analysis/Cargo.toml ./bridge-analysis/analysis/Cargo.toml
+COPY parse-files/Cargo.toml ./bridge-analysis/parse-files/Cargo.toml
 COPY web/Cargo.toml ./bridge-analysis/web/Cargo.toml
 COPY web/build.rs ./bridge-analysis/web/build.rs
 WORKDIR /workspace/bridge-analysis
-RUN mkdir -p analysis/src web/src web/static && \
-    echo '' > analysis/src/lib.rs && \
+RUN mkdir -p parse-files/src web/src web/static && \
+    echo '' > parse-files/src/lib.rs && \
     echo 'fn main() {}' > web/src/main.rs && \
     cargo build --release -p bridge-analysis-web && \
-    cargo clean --release -p bridge-club-analysis -p bridge-analysis-web && \
-    rm -rf analysis/src web/src web/static
+    cargo clean --release -p parse-files -p bridge-analysis-web && \
+    rm -rf parse-files/src web/src web/static
 
 # Real source for every member, then the actual build. Service-only edits
 # leave the cache-prime layer above untouched. `cargo clean -p` above
 # invalidated the workspace crates' fingerprints + artifacts but kept all
 # transitive crates.io deps compiled, so this build only re-compiles
-# bridge-club-analysis and bridge-analysis-web.
-COPY analysis/src ./analysis/src
+# parse-files and bridge-analysis-web.
+COPY parse-files/src ./parse-files/src
 COPY web/src ./web/src
 COPY web/static ./web/static
 RUN cargo build --release -p bridge-analysis-web

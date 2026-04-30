@@ -46,7 +46,7 @@ that emits the schema.
 
 | Crate | Binary | Purpose |
 |-------|--------|---------|
-| `analysis/` | (library) | Schema types in `data/schema.rs`, BWS+PBN→JSON adapter in `data/adapters/pbn_bws.rs`, schema-walk enrich passes in `data/builder.rs`. (Name "analysis" is historical — the analyzer moved to JS in 2026-04; this crate is now the file-translation layer.) |
+| `parse-files/` | (library) | Schema types in `data/schema.rs`, BWS+PBN→JSON adapter in `data/adapters/pbn_bws.rs`, schema-walk enrich passes in `data/builder.rs`. |
 | `web/` | `bridge-analysis-web` | Axum web server: file upload, JSON ingest, name-overrides, BBA proxy, admin dashboard, static SPA serving. Walks the schema directly via `web/src/upload_helpers.rs` to shape upload responses. |
 
 ### Key Dependencies
@@ -264,14 +264,14 @@ All located at `/Users/rick/Development/GitHub/`:
 The normalized JSON schema is owned by [`acbl-live-fetch/docs/normalized-schema.md`](../acbl-live-fetch/docs/normalized-schema.md).
 When the schema changes, both repos must move together:
 
-- server: update `analysis/src/data/schema.rs` (serde types). Bump
+- server: update `parse-files/src/data/schema.rs` (serde types). Bump
   `SUPPORTED_MAJOR` only on a breaking change.
-- server: if the change affects fields `analysis/src/data/builder.rs`'s
+- server: if the change affects fields `parse-files/src/data/builder.rs`'s
   enrich passes (`enrich_tricks`, `enrich_handviewer_urls`) read or
   write, update those.
-- server's BWS adapter (`analysis/src/data/adapters/pbn_bws.rs`) emits
-  the same schema; update it too if the change affects fields the
-  adapter writes.
+- server's BWS adapter (`parse-files/src/data/adapters/pbn_bws.rs`)
+  emits the same schema; update it too if the change affects fields
+  the adapter writes.
 - web's upload helpers (`web/src/upload_helpers.rs`) walk the schema
   for the upload response shape; update if a relevant field changes.
 - SPA: the JS analyzer in `web/static/index.html` reads the schema

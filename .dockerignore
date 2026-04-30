@@ -16,6 +16,6 @@ README.md
 LICENSE
 docker-compose.yml
 justfile
-analysis/examples
-analysis/tests
+parse-files/examples
+parse-files/tests
 activity-log.json
