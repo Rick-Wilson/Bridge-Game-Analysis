@@ -23,12 +23,24 @@ pub async fn acbl_help_image() -> impl IntoResponse {
     )
 }
 
-/// Health check endpoint.
-pub async fn health() -> Json<HealthResponse> {
+/// Service-contract health endpoint. Returns service status, version, and
+/// uptime for ops tooling to scrape.
+pub async fn healthz(
+    axum::extract::State(state): axum::extract::State<Arc<AppState>>,
+) -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "ok",
-        timestamp: chrono::Utc::now().to_rfc3339(),
+        version: state.version,
+        uptime_seconds: state.started_at.elapsed().as_secs(),
     })
+}
+
+/// Prometheus text-format metrics endpoint.
+pub async fn metrics() -> impl IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        crate::observability::metrics::render(),
+    )
 }
 
 /// Serve the main SPA page.
@@ -1020,10 +1032,9 @@ fn check_admin_access(
         return Ok(());
     }
 
-    // Check admin key
-    if let Some(ref admin_key) = state.admin_key {
+    if let Some(ref dashboard_secret) = state.dashboard_secret {
         if let Some(key) = params.get("key") {
-            if key == admin_key {
+            if key == dashboard_secret {
                 return Ok(());
             }
         }

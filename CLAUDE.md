@@ -179,7 +179,7 @@ HOST=0.0.0.0
 PORT=3001
 LOG_DIR=/opt/bridge-analysis/logs
 UPLOAD_DIR=/opt/bridge-analysis/uploads
-ADMIN_KEY=<set on server, not in repo>
+DASHBOARD_SECRET=<set on server, not in repo>
 ```
 
 ### Other Services on the Same Droplet

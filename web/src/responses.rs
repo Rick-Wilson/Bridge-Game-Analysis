@@ -8,10 +8,12 @@ use bridge_club_analysis::{
 };
 use serde::Serialize;
 
+/// Service-contract /healthz response.
 #[derive(Serialize)]
 pub struct HealthResponse {
     pub status: &'static str,
-    pub timestamp: String,
+    pub version: &'static str,
+    pub uptime_seconds: u64,
 }
 
 #[derive(Serialize)]

@@ -1,18 +1,21 @@
 mod analytics;
 mod api;
+mod observability;
 mod responses;
 
 use axum::{
     extract::DefaultBodyLimit,
     http::{HeaderValue, Method},
+    middleware,
+    response::Redirect,
     routing::{get, post},
     Router,
 };
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Instant;
 use tower_http::cors::CorsLayer;
-use tracing_subscriber::EnvFilter;
 
 /// Shared application state
 pub struct AppState {
@@ -20,10 +23,15 @@ pub struct AppState {
     pub upload_dir: PathBuf,
     /// Directory for audit/analytics logs
     pub log_dir: PathBuf,
-    /// Admin key for dashboard access
-    pub admin_key: Option<String>,
+    /// Secret for gating /admin/dashboard?key=… (matches the platform's
+    /// DASHBOARD_SECRET env var)
+    pub dashboard_secret: Option<String>,
     /// Base path for serving (e.g., "/club-game-analysis")
     pub base_path: String,
+    /// Process start time, used by /healthz for uptime_seconds.
+    pub started_at: Instant,
+    /// Service version, used by /healthz.
+    pub version: &'static str,
 }
 
 #[tokio::main]
@@ -31,12 +39,11 @@ async fn main() {
     // Load .env if present
     let _ = dotenvy::dotenv();
 
-    // Initialize tracing
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    // Service-contract logging: JSON to stdout in prod, pretty locally.
+    let log_level = std::env::var("LOG_LEVEL").unwrap_or_else(|_| "info".to_string());
+    let log_format = std::env::var("LOG_FORMAT").unwrap_or_else(|_| "json".to_string());
+    observability::logging::init(&log_level, &log_format);
+    observability::metrics::init();
 
     let host = std::env::var("HOST").unwrap_or_else(|_| "0.0.0.0".to_string());
     let port: u16 = std::env::var("PORT")
@@ -44,7 +51,7 @@ async fn main() {
         .and_then(|p| p.parse().ok())
         .unwrap_or(3001);
     let base_path = std::env::var("BASE_PATH").unwrap_or_else(|_| String::new());
-    let admin_key = std::env::var("ADMIN_KEY").ok();
+    let dashboard_secret = std::env::var("DASHBOARD_SECRET").ok();
 
     // Set up directories
     let upload_dir = std::env::var("UPLOAD_DIR")
@@ -61,7 +68,9 @@ async fn main() {
         upload_dir,
         log_dir,
         base_path: base_path.clone(),
-        admin_key,
+        dashboard_secret,
+        started_at: Instant::now(),
+        version: env!("CARGO_PKG_VERSION"),
     });
 
     // CORS - allow the domain and localhost for development
@@ -101,7 +110,12 @@ async fn main() {
         .route("/static/acbl-download-help.png", get(api::acbl_help_image))
         .nest("/api", api_routes)
         .nest("/admin", admin_routes)
-        .route("/health", get(api::health))
+        .route("/healthz", get(api::healthz))
+        .route("/metrics", get(api::metrics))
+        // Transition alias — old monitors / scripts still hitting /health
+        // get a 308 to /healthz. Drop once nothing external still uses it.
+        .route("/health", get(|| async { Redirect::permanent("/healthz") }))
+        .layer(middleware::from_fn(observability::metrics::track))
         .layer(cors)
         .layer(DefaultBodyLimit::max(20 * 1024 * 1024)) // 20MB for BWS files
         .with_state(state);
