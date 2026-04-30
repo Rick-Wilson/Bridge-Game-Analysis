@@ -334,7 +334,7 @@ fn hand_to_schema(hand: &bridge_parsers::Hand) -> SchemaHand {
 
 fn cards_in_suit(hand: &bridge_parsers::Hand, suit: Suit) -> Vec<String> {
     let mut cards = hand.cards_in_suit(suit);
-    cards.sort_by(|a, b| b.rank.cmp(&a.rank));
+    cards.sort_by_key(|c| std::cmp::Reverse(c.rank));
     cards
         .into_iter()
         .map(|c| {
