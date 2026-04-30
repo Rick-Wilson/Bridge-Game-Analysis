@@ -96,91 +96,72 @@ Before committing, always run and fix:
 
 ## Production Deployment
 
+Migrated 2026-04-30 from a native systemd binary to a container in the [bridge-craftwork-platform](../bridge-craftwork-platform) compose stack. The systemd unit is gone; everything below describes the current container path.
+
 ### Architecture
 
 ```
-User → Cloudflare DNS → DigitalOcean Droplet → Caddy → bridge-analysis-web
+User → Cloudflare DNS → edge Caddy (container, host network) → 127.0.0.1:3001 → bridge-analysis container
 ```
 
-- **Domain:** `club-game-analysis.bridge-classroom.com`
-- **DNS:** Cloudflare A record → droplet IP (DNS only, not proxied — Caddy handles TLS)
-- **Reverse proxy:** Caddy at `/opt/livekit/Caddyfile`
-- **Droplet IP:** `146.190.135.172`
-- **SSH:** `ssh root@146.190.135.172` (Mac id_ed25519 key)
-- **Service:** systemd `bridge-analysis-web`
-- **Install path:** `/opt/bridge-analysis/`
-- **Port:** 3001
-- **Requires:** `mdbtools` installed on server (for BWS file parsing)
+- **Domain:** `club-game-analysis.bridge-classroom.com` (Cloudflare DNS-only — edge Caddy terminates TLS via Let's Encrypt).
+- **Edge Caddy:** container in `/opt/edge/` on the droplet (managed by platform repo's `edge/Caddyfile`). Stanza already in place from before the migration; no change needed.
+- **Service:** `bridge-analysis` block in `/opt/bridge-craftwork/docker-compose.yml` (file lives in the platform repo at `droplet/docker-compose.yml`, symlinked into `/opt/bridge-craftwork/`).
+- **Image:** `ghcr.io/rick-wilson/bridge-analysis:dev` for iteration, `:vX.Y.Z` and `:latest` from CI on tags.
+- **Port:** 3001 (loopback only — `127.0.0.1:3001:3001`).
+- **Volume:** `/opt/bridge-craftwork/data/services/bridge-analysis/{uploads,logs}/` ↔ container's `/data/`.
+- **mdbtools** is in the runtime image (`RUNTIME_PACKAGES="mdbtools"` in [Dockerfile](Dockerfile)). No host install required.
+- **SSH:** `ssh bridge-droplet` (a maintainer-local alias in `~/.ssh/config`).
 
-### Caddy Configuration
+### Local build → droplet (the iteration path)
 
-The Caddyfile at `/opt/livekit/Caddyfile` includes:
-```
-club-game-analysis.bridge-classroom.com {
-    reverse_proxy localhost:3001
-}
+The [justfile](justfile) wraps the whole local pipeline. Prereq once: `colima start --vz-rosetta` (Apple Silicon needs Rosetta-via-VZ to cross-compile to amd64 cleanly; QEMU segfaults rustc).
+
+```sh
+just build      # docker buildx → linux/amd64 → ghcr.io/rick-wilson/bridge-analysis:dev (local)
+just push       # build + docker push :dev to ghcr.io
+just deploy     # push + ssh bridge-droplet '/opt/bridge-craftwork/scripts/deploy.sh bridge-analysis'
+just logs       # tail droplet logs
 ```
 
-**Restart Caddy after changes:**
-```bash
-ssh root@146.190.135.172 'cd /opt/livekit && docker compose restart caddy'
-```
+`deploy.sh` is generic: `docker compose pull <service> && docker compose up -d <service>`.
 
 ### CI/CD Pipeline
 
-GitHub Actions (`.github/workflows/build.yml`) builds on push to `main` or version tags:
-1. Checks out this repo and Bridge-Parsers side by side
-2. Installs mdbtools
-3. Builds both `bridge-analysis` (CLI) and `bridge-analysis-web` (server) for Linux x64
-4. Runs tests
-5. Uploads artifacts
-6. On version tags (`v*`): creates a GitHub Release with tarball
+GitHub Actions (`.github/workflows/ci.yml`) on push to `main` and on `v*` tags:
+1. `cargo fmt --check && cargo clippy -- -D warnings && cargo test --all`.
+2. `docker buildx build --platform linux/amd64` and push to `ghcr.io/rick-wilson/bridge-analysis`:
+   - `:main` for branch pushes
+   - `:vX.Y.Z` and `:latest` for tags
 
-### Deploy New Version
-
-After CI builds successfully:
-```bash
-# 1. Download artifact from GitHub Actions
-gh run download <RUN_ID> --repo Rick-Wilson/Bridge-Club-Game-Analysis -n bridge-analysis-linux-x64
-
-# 2. Copy to droplet — use a staging filename, the running binary is locked.
-scp bridge-analysis-web root@146.190.135.172:/opt/bridge-analysis/bridge-analysis-web.new
-
-# 3. Stop service, swap binary, start. Doing it in one ssh call keeps the
-#    service down for ~2 seconds.
-ssh root@146.190.135.172 'set -e
-  systemctl stop bridge-analysis-web
-  mv /opt/bridge-analysis/bridge-analysis-web.new /opt/bridge-analysis/bridge-analysis-web
-  chmod +x /opt/bridge-analysis/bridge-analysis-web
-  systemctl start bridge-analysis-web'
-```
-
-A direct `scp` over the running binary fails (`dest open: Failure`) because
-systemd holds the file open — that's why we use the staging-filename pattern.
+To promote a tagged release to the droplet: `just release vX.Y.Z` (tags + pushes, then `just deploy-version vX.Y.Z` after CI).
 
 ### Server Management
 
 ```bash
 # Check status
-ssh root@146.190.135.172 'systemctl status bridge-analysis-web --no-pager'
+ssh bridge-droplet 'cd /opt/bridge-craftwork && docker compose ps bridge-analysis'
 
-# View logs
-ssh root@146.190.135.172 'journalctl -u bridge-analysis-web -n 50 --no-pager'
+# View logs (tail)
+ssh bridge-droplet 'cd /opt/bridge-craftwork && docker compose logs -f --tail 100 bridge-analysis'
 
 # Restart
-ssh root@146.190.135.172 'systemctl restart bridge-analysis-web'
+ssh bridge-droplet 'cd /opt/bridge-craftwork && docker compose restart bridge-analysis'
+
+# Shell into the running container
+ssh -t bridge-droplet 'cd /opt/bridge-craftwork && docker compose exec bridge-analysis /bin/sh'
 ```
 
 ### Environment Configuration
 
-Environment file at `/opt/bridge-analysis/.env`:
+Env vars are wired in the platform repo's `droplet/docker-compose.yml`. Secrets come from `/opt/bridge-craftwork/.env` (mode 600, never committed):
+
 ```
-HOST=0.0.0.0
-PORT=3001
-LOG_DIR=/opt/bridge-analysis/logs
-UPLOAD_DIR=/opt/bridge-analysis/uploads
-DASHBOARD_SECRET=<set on server, not in repo>
+BRIDGE_ANALYSIS_TAG=dev                 # flip to vX.Y.Z to pin a release
+BRIDGE_ANALYSIS_DASHBOARD_SECRET=…      # was ADMIN_KEY in the old systemd .env
 ```
+
+The compose file injects these plus static values (`PORT=3001`, `HOST=0.0.0.0`, `LOG_LEVEL=info`, `LOG_FORMAT=json`, `UPLOAD_DIR=/data/uploads`, `LOG_DIR=/data/logs`).
 
 ### Other Services on the Same Droplet
 
