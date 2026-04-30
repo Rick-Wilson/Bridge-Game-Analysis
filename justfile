@@ -1,7 +1,58 @@
+# justfile
+#
+# This file reflects the maintainer's specific workflow: Apple Silicon
+# Mac builds via Colima/Rosetta, deployed to a private host alias
+# `bridge-droplet`. If you're not the maintainer, the sections below are
+# scoped so you can keep what's useful and ignore (or replace) the rest:
+#
+#   1. UNIVERSAL          — works on any platform with cargo + git.
+#   2. APPLE SILICON MAC  — image build pipeline. Skip if you build via
+#                           `docker build .` directly or via GitHub Actions.
+#   3. MAINTAINER DROPLET — ssh-based deploy to a private host. Skip
+#                           or replace if you deploy somewhere else.
+#
+# The Dockerfile and .github/workflows/ are deliberately platform-
+# agnostic and don't depend on this justfile.
+
 SERVICE := "bridge-analysis"
-# ghcr.io paths must be lowercase even though the GitHub user is Rick-Wilson.
+# ghcr.io paths must be lowercase. The GitHub user is Rick-Wilson but the
+# image registry rejects mixed case ("repository name must be lowercase").
 IMAGE   := "ghcr.io/rick-wilson/" + SERVICE
-DROPLET := "bridge-droplet"
+
+default:
+    @just --list
+
+# =============================================================================
+# 1. UNIVERSAL
+# =============================================================================
+
+# Run locally without docker (fastest iteration loop).
+dev:
+    cargo run -p bridge-analysis-web
+
+# Run cargo tests across all workspace members.
+test:
+    cargo test --all
+
+# Format and lint across all workspace members.
+check:
+    cargo fmt --all --check
+    cargo clippy --all-targets -- -D warnings
+
+# Tag and push a release. CI builds and pushes the versioned image.
+release VERSION:
+    git tag {{VERSION}}
+    git push origin {{VERSION}}
+    @echo "GitHub Actions will build {{VERSION}}. Once CI is green:"
+    @echo "  just deploy-version {{VERSION}}"
+
+# =============================================================================
+# 2. APPLE SILICON MAC + COLIMA
+#
+# These recipes assume Colima with --vz-rosetta is set up locally for
+# amd64 cross-builds. On other platforms, build via `docker build .`
+# directly (native architecture), or push to GitHub and let CI build.
+# =============================================================================
 
 # Sibling crate path-deps. Empty today — we build against the git URLs
 # declared in Cargo.toml. To add hot-edit support for a sibling (e.g.
@@ -11,57 +62,49 @@ DROPLET := "bridge-droplet"
 # into Cargo.toml so it's visible to the container build too).
 SIBLING_CONTEXTS := ""
 
-default:
-    @just --list
-
 # Ensure colima is running (no-op if already up).
 _colima-up:
     @colima status >/dev/null 2>&1 || (echo "Starting colima..." && colima start)
 
-# Native-arch build (fast, for local testing).
+# Build the droplet-bound linux/amd64 image.
+#
+# This is the *only* image-producing recipe. It always targets amd64
+# because the droplet is x86_64; there's no native-arch build because
+# Rust testing happens in cargo (`just dev`, `cargo test`) without
+# needing a container, and any droplet-targeted smoke test needs amd64
+# anyway.
+#
+# Forced through the `colima` builder (host daemon, uses Apple Rosetta
+# on Apple Silicon) instead of buildx's default `docker-container`
+# driver. The default driver carries its own QEMU emulator inside the
+# buildkit container, which segfaults running rustc x86_64. The colima
+# builder uses the colima VM directly, where Rosetta-via-VZ emulates
+# amd64 at near-native speed and rustc compiles cleanly.
+#
+# Prereq: `colima start --vz-rosetta` (one-time; persists across reboots).
 build: _colima-up
-    docker build {{SIBLING_CONTEXTS}} -t {{IMAGE}}:local .
-
-# Run locally on port 3001, mounting ./data for persistent state.
-run: build
-    docker run --rm -p 3001:3001 \
-        -e DASHBOARD_SECRET=devsecret \
-        -e LOG_FORMAT=pretty \
-        -v {{justfile_directory()}}/data:/data \
-        {{IMAGE}}:local
-
-# Run cargo locally without docker (for fastest iteration).
-dev:
-    cargo run -p bridge-analysis-web
-
-# Cross-arch build for the droplet (linux/amd64).
-#
-# Forced through the `colima` builder (host daemon, uses Apple Rosetta on
-# Apple Silicon) instead of whatever buildx's active builder is. The
-# default `docker-container` driver carries its own QEMU emulator inside
-# the buildkit container, which segfaults running rustc x86_64. The
-# `colima` builder uses the colima VM directly, where Rosetta-via-VZ
-# emulates amd64 at near-native speed and rustc runs cleanly.
-#
-# Prereq: `colima start --vz-rosetta` (already done if you've run this
-# successfully once; persists across reboots).
-build-prod: _colima-up
     docker buildx --builder colima build {{SIBLING_CONTEXTS}} --platform linux/amd64 -t {{IMAGE}}:dev --load .
 
 # Push the dev image to ghcr.io.
-push: build-prod
+push: build
     docker push {{IMAGE}}:dev
 
-# Deploy the dev image to the droplet.
+# =============================================================================
+# 3. MAINTAINER DROPLET
+#
+# These recipes ssh to `bridge-droplet`, a local SSH alias the
+# maintainer defines in their personal ~/.ssh/config — it doesn't
+# resolve for anyone else and contains no IP or hostname information
+# in this repo. Forks should either (a) define their own SSH alias
+# with the same name pointing at their own host, or (b) replace these
+# recipes with whatever their deploy mechanism is.
+# =============================================================================
+
+DROPLET := "bridge-droplet"
+
+# Build, push, and trigger a droplet pull+restart.
 deploy: push
     ssh {{DROPLET}} '/opt/bridge-craftwork/scripts/deploy.sh {{SERVICE}}'
-
-# Tag and push a release. CI will build and push the versioned image.
-release VERSION:
-    git tag {{VERSION}}
-    git push origin {{VERSION}}
-    @echo "GitHub Actions will build {{VERSION}}. Once CI is green:"
-    @echo "  just deploy-version {{VERSION}}"
 
 # Promote a tagged version on the droplet.
 deploy-version VERSION:
@@ -75,9 +118,3 @@ logs:
 # Shell into the running container.
 shell:
     ssh -t {{DROPLET}} 'cd /opt/bridge-craftwork && docker compose exec {{SERVICE}} /bin/sh'
-
-# Run all checks the way CI does.
-check:
-    cargo fmt --all --check
-    cargo clippy --all-targets -- -D warnings
-    cargo test --all
