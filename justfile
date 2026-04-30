@@ -1,5 +1,6 @@
 SERVICE := "bridge-analysis"
-IMAGE   := "ghcr.io/Rick-Wilson/" + SERVICE
+# ghcr.io paths must be lowercase even though the GitHub user is Rick-Wilson.
+IMAGE   := "ghcr.io/rick-wilson/" + SERVICE
 DROPLET := "bridge-droplet"
 
 # Sibling crate path-deps. Empty today — we build against the git URLs
@@ -34,8 +35,18 @@ dev:
     cargo run -p bridge-analysis-web
 
 # Cross-arch build for the droplet (linux/amd64).
+#
+# Forced through the `colima` builder (host daemon, uses Apple Rosetta on
+# Apple Silicon) instead of whatever buildx's active builder is. The
+# default `docker-container` driver carries its own QEMU emulator inside
+# the buildkit container, which segfaults running rustc x86_64. The
+# `colima` builder uses the colima VM directly, where Rosetta-via-VZ
+# emulates amd64 at near-native speed and rustc runs cleanly.
+#
+# Prereq: `colima start --vz-rosetta` (already done if you've run this
+# successfully once; persists across reboots).
 build-prod: _colima-up
-    docker buildx build {{SIBLING_CONTEXTS}} --platform linux/amd64 -t {{IMAGE}}:dev --load .
+    docker buildx --builder colima build {{SIBLING_CONTEXTS}} --platform linux/amd64 -t {{IMAGE}}:dev --load .
 
 # Push the dev image to ghcr.io.
 push: build-prod
