@@ -15,17 +15,15 @@ WORKDIR /workspace
 # changes, this layer stays cached and the dummy build doesn't re-run.
 COPY Cargo.toml Cargo.lock ./bridge-analysis/
 COPY analysis/Cargo.toml ./bridge-analysis/analysis/Cargo.toml
-COPY cli/Cargo.toml ./bridge-analysis/cli/Cargo.toml
 COPY web/Cargo.toml ./bridge-analysis/web/Cargo.toml
 COPY web/build.rs ./bridge-analysis/web/build.rs
 WORKDIR /workspace/bridge-analysis
-RUN mkdir -p analysis/src cli/src web/src web/static && \
+RUN mkdir -p analysis/src web/src web/static && \
     echo '' > analysis/src/lib.rs && \
-    echo 'fn main() {}' > cli/src/main.rs && \
     echo 'fn main() {}' > web/src/main.rs && \
     cargo build --release -p bridge-analysis-web && \
     cargo clean --release -p bridge-club-analysis -p bridge-analysis-web && \
-    rm -rf analysis/src cli/src web/src web/static
+    rm -rf analysis/src web/src web/static
 
 # Real source for every member, then the actual build. Service-only edits
 # leave the cache-prime layer above untouched. `cargo clean -p` above
@@ -33,7 +31,6 @@ RUN mkdir -p analysis/src cli/src web/src web/static && \
 # transitive crates.io deps compiled, so this build only re-compiles
 # bridge-club-analysis and bridge-analysis-web.
 COPY analysis/src ./analysis/src
-COPY cli/src ./cli/src
 COPY web/src ./web/src
 COPY web/static ./web/static
 RUN cargo build --release -p bridge-analysis-web
