@@ -134,17 +134,14 @@ pub async fn upload_files(
     // handviewer URLs with canonical BBO URLs that include a constructed
     // auction). After this, everything downstream works off the schema
     // alone — the JS analyzer in the SPA reads the same JSON.
-    let mut normalized = parse_files::data::adapters::pbn_bws::load_normalized(
-        &bws_path,
-        pbn_path.as_deref(),
-        None,
-    )
-    .map_err(|e| {
-        (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            format!("Failed to parse files: {}", e),
-        )
-    })?;
+    let mut normalized =
+        parse_files::data::adapters::pbn_bws::load_normalized(&bws_path, pbn_path.as_deref(), None)
+            .map_err(|e| {
+                (
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    format!("Failed to parse files: {}", e),
+                )
+            })?;
     parse_files::enrich_tricks(&mut normalized);
     parse_files::enrich_handviewer_urls(&mut normalized);
     persist_data_json(&session_dir, &normalized)?;
