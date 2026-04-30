@@ -2,6 +2,7 @@
 
 use crate::analytics::{self, AuditLogger};
 use crate::responses::*;
+use crate::upload_helpers;
 use crate::AppState;
 use axum::{
     extract::{ConnectInfo, Multipart, Query, State},
@@ -128,10 +129,12 @@ pub async fn upload_files(
 
     let bws_path = bws_path.ok_or((StatusCode::BAD_REQUEST, "No BWS file uploaded".to_string()))?;
 
-    // Run the BWS+PBN adapter, then the builder. BWS+PBN always produces one
-    // session; we still keep the full list so the response shape matches
-    // multi-session uploads from the JSON ingest endpoint.
-    let normalized = bridge_club_analysis::data::adapters::pbn_bws::load_normalized(
+    // Run the BWS+PBN adapter to produce a NormalizedGame, then enrich
+    // (derive missing tricks from score; replace adapter-supplied
+    // handviewer URLs with canonical BBO URLs that include a constructed
+    // auction). After this, everything downstream works off the schema
+    // alone — the JS analyzer in the SPA reads the same JSON.
+    let mut normalized = bridge_club_analysis::data::adapters::pbn_bws::load_normalized(
         &bws_path,
         pbn_path.as_deref(),
         None,
@@ -142,125 +145,22 @@ pub async fn upload_files(
             format!("Failed to parse files: {}", e),
         )
     })?;
-    let session_list = bridge_club_analysis::build_sessions(&normalized, None).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Analysis error: {}", e),
-        )
-    })?;
-    let game_data = session_list.first().map(|s| s.data.clone()).ok_or((
-        StatusCode::INTERNAL_SERVER_ERROR,
-        "No sessions in upload".to_string(),
-    ))?;
-    let session_infos: Vec<SessionInfo> = session_list
-        .iter()
-        .map(|s| SessionInfo {
-            session_idx: s.session_idx,
-            label: s.label.clone(),
-            board_count: s.data.boards.len(),
-            result_count: s.data.results.len(),
-        })
-        .collect();
+    bridge_club_analysis::enrich_tricks(&mut normalized);
+    bridge_club_analysis::enrich_handviewer_urls(&mut normalized);
+    persist_data_json(&session_dir, &normalized)?;
 
-    // Extract player list (keep placeholder names so player grid isn't empty)
-    let mut players: Vec<String> = game_data
-        .players
-        .all_players()
-        .map(|p| p.display_name())
-        .collect();
-    players.sort();
-    players.dedup();
-
-    // Build maps of display name -> ACBL number and placeholder list
-    let mut player_acbl: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-    let mut missing_players: Vec<MissingPlayerInfo> = Vec::new();
-    for p in game_data.players.all_players() {
-        let display_name = p.display_name();
-        let acbl = p.id.acbl_number.clone();
-        if display_name.starts_with("Player ") {
-            missing_players.push(MissingPlayerInfo {
-                display_name,
-                acbl_number: acbl,
-            });
-        } else if let Some(acbl) = acbl {
-            player_acbl.insert(display_name, acbl);
-        }
-    }
-    missing_players.sort_by(|a, b| a.display_name.cmp(&b.display_name));
-    missing_players.dedup_by(|a, b| a.display_name == b.display_name);
-
-    // Count placeholder names (indicates the BWS had no ACBL name lookup)
-    let missing_names = missing_players.len();
-
-    // Build pair_num -> [acbl1, acbl2] map for the paste parser.
-    // Key is the pair number as a string (for JSON compatibility).
-    let mut pair_acbl: std::collections::HashMap<String, Vec<Option<String>>> =
-        std::collections::HashMap::new();
-    for ((_section, pair_num), (first_id, second_id)) in &game_data.pairs_by_number {
-        if *pair_num <= 0 {
-            continue;
-        }
-        pair_acbl.insert(
-            pair_num.to_string(),
-            vec![first_id.acbl_number.clone(), second_id.acbl_number.clone()],
-        );
-    }
-
-    // Extract board list
-    let mut boards: Vec<u32> = game_data.results.iter().map(|r| r.board_number).collect();
-    boards.sort();
-    boards.dedup();
-
-    let result_count = game_data.results.len();
-
-    // Save game data as serialized file for later API calls
-    // (We re-parse on each request for now — simple approach)
-
-    let duration = start.elapsed().as_millis() as u64;
-    let logger = AuditLogger::new(&state.log_dir);
-    logger.log_request(
+    let response = build_upload_response(
+        session_id.clone(),
+        &normalized,
+        pbn_path.is_some(),
+        &state,
         &anon_ip,
-        "upload",
-        &format!("boards={} results={}", boards.len(), result_count),
         &browser,
         &device,
-        duration,
-    );
-
-    // Parse event date to a cleaner format if possible
-    let event_date = game_data.event_date.as_ref().map(|d| {
-        // BWS dates often look like "03/30/26 00:00:00" — extract just the date part
-        let date_part = d.split(' ').next().unwrap_or(d);
-        // Try to parse MM/DD/YY and reformat
-        let parts: Vec<&str> = date_part.split('/').collect();
-        if parts.len() == 3 {
-            let year = if parts[2].len() == 2 {
-                format!("20{}", parts[2])
-            } else {
-                parts[2].to_string()
-            };
-            format!("{}-{}-{}", year, parts[0], parts[1])
-        } else {
-            date_part.to_string()
-        }
-    });
-
-    Ok(Json(UploadResponse {
-        session_id,
-        event_name: game_data.event_name,
-        event_date,
-        players,
-        board_count: boards.len(),
-        boards,
-        result_count,
-        has_pbn: pbn_path.is_some(),
-        missing_names,
-        player_acbl,
-        missing_players,
-        pair_acbl,
-        sessions: session_infos,
-    }))
+        "upload",
+        start,
+    )?;
+    Ok(Json(response))
 }
 
 /// Accept a normalized JSON document (schema 1.x) from the browser
@@ -285,7 +185,7 @@ pub async fn upload_normalized(
     })?;
 
     // Parse + version-check first so we never write garbage to disk.
-    let normalized = bridge_club_analysis::parse_normalized(body_str).map_err(|e| {
+    let mut normalized = bridge_club_analysis::parse_normalized(body_str).map_err(|e| {
         let code = match e {
             bridge_club_analysis::SchemaParseError::UnsupportedMajor { .. } => {
                 StatusCode::UNPROCESSABLE_ENTITY
@@ -295,41 +195,20 @@ pub async fn upload_normalized(
         (code, e.to_string())
     })?;
 
-    // Adapter-emitted handviewer_urls (e.g. ACBL Live's "play this hand"
-    // link, lifted by the extension) often render only the deal — no
-    // auction. Override every result's URL with one built from the
-    // schema's deal + contract + declarer + players via the same Rust
-    // function the BWS adapter uses, so the BBO viewer shows our
-    // constructed auction (passes-to-declarer, contract bid, closing
-    // passes / X / XX).
-    let mut normalized = normalized;
-    // Derive missing trick counts from score before building URLs (so
-    // downstream consumers that read the schema have trick-aware analysis
-    // — DVF, "below DD", "went down", etc.).
+    // Derive missing trick counts from score; replace adapter-supplied
+    // handviewer URLs with canonical BBO URLs (constructed auction from
+    // passes-to-declarer + contract + closing passes / X / XX).
     bridge_club_analysis::enrich_tricks(&mut normalized);
     bridge_club_analysis::enrich_handviewer_urls(&mut normalized);
-    let body_str = serde_json::to_string(&normalized).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to re-serialize after enrichment: {}", e),
-        )
-    })?;
 
-    let session_list = bridge_club_analysis::build_sessions(&normalized, None).map_err(|e| {
-        (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            format!("Failed to build sessions: {}", e),
-        )
-    })?;
-    if session_list.is_empty() {
+    if upload_helpers::flatten_sessions(&normalized).is_empty() {
         return Err((
             StatusCode::UNPROCESSABLE_ENTITY,
             "No sessions found in normalized document".to_string(),
         ));
     }
 
-    // Persist the document. Use a fresh UUID — JSON pushes don't append to
-    // an existing session.
+    // Use a fresh UUID — JSON pushes don't append to an existing session.
     let session_id = uuid::Uuid::new_v4().to_string();
     let session_dir = state.upload_dir.join(&session_id);
     std::fs::create_dir_all(&session_dir).map_err(|e| {
@@ -338,101 +217,20 @@ pub async fn upload_normalized(
             format!("Failed to create session dir: {}", e),
         )
     })?;
-    std::fs::write(session_dir.join("data.json"), &body_str).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to persist data.json: {}", e),
-        )
-    })?;
+    persist_data_json(&session_dir, &normalized)?;
 
-    // Build response identical to /api/upload (so frontend code branches once
-    // on entry, not on input source).
-    let game_data = session_list[0].data.clone();
-    let session_infos: Vec<SessionInfo> = session_list
-        .iter()
-        .map(|s| SessionInfo {
-            session_idx: s.session_idx,
-            label: s.label.clone(),
-            board_count: s.data.boards.len(),
-            result_count: s.data.results.len(),
-        })
-        .collect();
-
-    let mut players: Vec<String> = game_data
-        .players
-        .all_players()
-        .map(|p| p.display_name())
-        .collect();
-    players.sort();
-    players.dedup();
-
-    let mut player_acbl: std::collections::HashMap<String, String> =
-        std::collections::HashMap::new();
-    let mut missing_players: Vec<MissingPlayerInfo> = Vec::new();
-    for p in game_data.players.all_players() {
-        let display_name = p.display_name();
-        let acbl = p.id.acbl_number.clone();
-        if display_name.starts_with("Player ") {
-            missing_players.push(MissingPlayerInfo {
-                display_name,
-                acbl_number: acbl,
-            });
-        } else if let Some(acbl) = acbl {
-            player_acbl.insert(display_name, acbl);
-        }
-    }
-    missing_players.sort_by(|a, b| a.display_name.cmp(&b.display_name));
-    missing_players.dedup_by(|a, b| a.display_name == b.display_name);
-    let missing_names = missing_players.len();
-
-    let mut pair_acbl: std::collections::HashMap<String, Vec<Option<String>>> =
-        std::collections::HashMap::new();
-    for ((_section, pair_num), (first_id, second_id)) in &game_data.pairs_by_number {
-        if *pair_num <= 0 {
-            continue;
-        }
-        pair_acbl.insert(
-            pair_num.to_string(),
-            vec![first_id.acbl_number.clone(), second_id.acbl_number.clone()],
-        );
-    }
-
-    let mut boards: Vec<u32> = game_data.results.iter().map(|r| r.board_number).collect();
-    boards.sort();
-    boards.dedup();
-    let result_count = game_data.results.len();
-
-    let duration = start.elapsed().as_millis() as u64;
-    let logger = AuditLogger::new(&state.log_dir);
-    logger.log_request(
+    let response = build_upload_response(
+        session_id,
+        &normalized,
+        true, // Normalized documents always carry full board data.
+        &state,
         &anon_ip,
-        "upload-normalized",
-        &format!(
-            "sessions={} boards={} results={}",
-            session_list.len(),
-            boards.len(),
-            result_count
-        ),
         &browser,
         &device,
-        duration,
-    );
-
-    Ok(Json(UploadResponse {
-        session_id,
-        event_name: game_data.event_name,
-        event_date: game_data.event_date,
-        players,
-        board_count: boards.len(),
-        boards,
-        result_count,
-        has_pbn: true, // Normalized documents always carry full board data
-        missing_names,
-        player_acbl,
-        missing_players,
-        pair_acbl,
-        sessions: session_infos,
-    }))
+        "upload-normalized",
+        start,
+    )?;
+    Ok(Json(response))
 }
 
 /// List all sessions in an upload (BWS+PBN: always 1; JSON ingest: many).
@@ -440,14 +238,19 @@ pub async fn list_sessions(
     State(state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
 ) -> Result<Json<Vec<SessionInfo>>, (StatusCode, String)> {
-    let sessions = load_sessions(&state, &params)?;
-    let infos = sessions
+    let session_id = params.get("session").ok_or((
+        StatusCode::BAD_REQUEST,
+        "Missing 'session' parameter".to_string(),
+    ))?;
+    let session_dir = resolve_session_dir(&state, session_id)?;
+    let game = read_data_json(&session_dir)?;
+    let infos: Vec<SessionInfo> = upload_helpers::flatten_sessions(&game)
         .into_iter()
         .map(|s| SessionInfo {
             session_idx: s.session_idx,
             label: s.label,
-            board_count: s.data.boards.len(),
-            result_count: s.data.results.len(),
+            board_count: s.session.boards.len(),
+            result_count: upload_helpers::result_count(s.session),
         })
         .collect();
     Ok(Json(infos))
@@ -486,11 +289,12 @@ pub async fn bba_proxy(body: axum::body::Bytes) -> Result<impl IntoResponse, (St
     ))
 }
 
-/// Update player name overrides for a session.
+/// Apply player name overrides (acbl_number → display name) to a session.
 ///
-/// Body: JSON map of ACBL number -> name, e.g. {"2176661": "David Bailey", ...}.
-/// Merged into the session's names.json file, which is applied on every
-/// subsequent API request.
+/// Body: JSON map of ACBL number → name, e.g. {"2176661": "David Bailey"}.
+/// Mutates `data.json` in place so subsequent /api/normalized reads see
+/// the override; also re-runs the handviewer-URL enrichment so the
+/// constructed BBO URL embeds the new names.
 pub async fn update_names(
     State(state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
@@ -500,66 +304,40 @@ pub async fn update_names(
         StatusCode::BAD_REQUEST,
         "Missing 'session' parameter".to_string(),
     ))?;
+    let session_dir = resolve_session_dir(&state, session_id)?;
 
-    // Validate session ID (UUID format)
-    if session_id.len() != 36
-        || !session_id
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() || c == '-')
-    {
-        return Err((StatusCode::BAD_REQUEST, "Invalid session ID".to_string()));
+    // Filter empty entries and trim whitespace.
+    let overrides: HashMap<String, String> = new_names
+        .into_iter()
+        .filter_map(|(acbl, name)| {
+            let acbl = acbl.trim().to_string();
+            let name = name.trim().to_string();
+            if acbl.is_empty() || name.is_empty() {
+                None
+            } else {
+                Some((acbl, name))
+            }
+        })
+        .collect();
+
+    let mut game = read_data_json(&session_dir)?;
+    let applied = upload_helpers::apply_name_overrides(&mut game, &overrides);
+    if applied > 0 {
+        // Names appear in the constructed BBO handviewer URLs; rebuild them.
+        bridge_club_analysis::enrich_handviewer_urls(&mut game);
     }
-
-    let session_dir = state.upload_dir.join(session_id);
-    if !session_dir.exists() {
-        return Err((
-            StatusCode::NOT_FOUND,
-            "Session not found or expired".to_string(),
-        ));
-    }
-
-    // Load existing names.json if present, then merge in the new names
-    let names_path = session_dir.join("names.json");
-    let mut existing: HashMap<String, String> = if names_path.exists() {
-        std::fs::read_to_string(&names_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-            .unwrap_or_default()
-    } else {
-        HashMap::new()
-    };
-
-    for (acbl, name) in new_names {
-        if !acbl.trim().is_empty() && !name.trim().is_empty() {
-            existing.insert(acbl.trim().to_string(), name.trim().to_string());
-        }
-    }
-
-    let json = serde_json::to_string_pretty(&existing).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to serialize names: {}", e),
-        )
-    })?;
-    std::fs::write(&names_path, json).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to write names.json: {}", e),
-        )
-    })?;
+    persist_data_json(&session_dir, &game)?;
 
     Ok(Json(UpdateNamesResponse {
-        total_names: existing.len(),
+        total_names: applied,
     }))
 }
 
 /// Return the full normalized JSON document for a session as raw bytes.
 ///
-/// For data.json sessions (extension JSON pushes), streams the file directly.
-/// For BWS+PBN sessions, runs the adapter on demand and serializes the result.
-/// Used by the JS port's parity-test harness — the SPA fetches this once
-/// after upload, then runs client-side analysis against it and compares to
-/// the server's per-player / per-board responses.
+/// Every session — whether it came from BWS+PBN multipart or from a
+/// JSON push from the browser extension — is persisted as `data.json`
+/// at upload time, so this endpoint just streams that file.
 pub async fn get_normalized(
     State(state): State<Arc<AppState>>,
     Query(params): Query<HashMap<String, String>>,
@@ -568,82 +346,11 @@ pub async fn get_normalized(
         StatusCode::BAD_REQUEST,
         "Missing 'session' parameter".to_string(),
     ))?;
-    if session_id.len() != 36
-        || !session_id
-            .chars()
-            .all(|c| c.is_ascii_hexdigit() || c == '-')
-    {
-        return Err((StatusCode::BAD_REQUEST, "Invalid session ID".to_string()));
-    }
-    let session_dir = state.upload_dir.join(session_id);
-    if !session_dir.exists() {
-        return Err((
+    let session_dir = resolve_session_dir(&state, session_id)?;
+    let body = std::fs::read_to_string(session_dir.join("data.json")).map_err(|_| {
+        (
             StatusCode::NOT_FOUND,
-            "Session not found or expired".to_string(),
-        ));
-    }
-
-    // Prefer the original JSON when it was uploaded directly (extension path) —
-    // it preserves any source-side fields the analyzer doesn't model.
-    let data_json_path = session_dir.join("data.json");
-    if data_json_path.exists() {
-        let body = std::fs::read_to_string(&data_json_path).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to read data.json: {}", e),
-            )
-        })?;
-        return Ok((
-            [(axum::http::header::CONTENT_TYPE, "application/json")],
-            body,
-        ));
-    }
-
-    // BWS+PBN path: run the adapter, serialize.
-    let mut bws_path = None;
-    let mut pbn_path = None;
-    if let Ok(entries) = std::fs::read_dir(&session_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            match ext.as_str() {
-                "bws" => bws_path = Some(path),
-                "pbn" => pbn_path = Some(path),
-                _ => {}
-            }
-        }
-    }
-    let bws_path = bws_path.ok_or((
-        StatusCode::NOT_FOUND,
-        "BWS file not found in session".to_string(),
-    ))?;
-    let names_path = session_dir.join("names.json");
-    let name_overrides: Option<HashMap<String, String>> = if names_path.exists() {
-        std::fs::read_to_string(&names_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-    } else {
-        None
-    };
-    let normalized = bridge_club_analysis::data::adapters::pbn_bws::load_normalized(
-        &bws_path,
-        pbn_path.as_deref(),
-        name_overrides.as_ref(),
-    )
-    .map_err(|e| {
-        (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            format!("Failed to parse BWS/PBN: {}", e),
-        )
-    })?;
-    let body = serde_json::to_string(&normalized).map_err(|e| {
-        (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Failed to serialize: {}", e),
+            "Session has no data.json (uploaded before the schema-only refactor?)".to_string(),
         )
     })?;
     Ok((
@@ -700,18 +407,11 @@ pub async fn admin_logs(
 
 // ==================== Helpers ====================
 
-/// Load all sessions for an upload UUID. BWS+PBN uploads always produce
-/// one session; the JSON ingest endpoint can produce many.
-fn load_sessions(
+/// Validate the session-id query param and return the session directory.
+fn resolve_session_dir(
     state: &AppState,
-    params: &HashMap<String, String>,
-) -> Result<Vec<bridge_club_analysis::SessionData>, (StatusCode, String)> {
-    let session_id = params.get("session").ok_or((
-        StatusCode::BAD_REQUEST,
-        "Missing 'session' parameter".to_string(),
-    ))?;
-
-    // Validate session ID format (UUID)
+    session_id: &str,
+) -> Result<std::path::PathBuf, (StatusCode, String)> {
     if session_id.len() != 36
         || !session_id
             .chars()
@@ -719,7 +419,6 @@ fn load_sessions(
     {
         return Err((StatusCode::BAD_REQUEST, "Invalid session ID".to_string()));
     }
-
     let session_dir = state.upload_dir.join(session_id);
     if !session_dir.exists() {
         return Err((
@@ -727,84 +426,132 @@ fn load_sessions(
             "Session not found or expired".to_string(),
         ));
     }
+    Ok(session_dir)
+}
 
-    // Load name overrides if names.json exists in the session directory.
-    let names_path = session_dir.join("names.json");
-    let name_overrides: Option<HashMap<String, String>> = if names_path.exists() {
-        std::fs::read_to_string(&names_path)
-            .ok()
-            .and_then(|s| serde_json::from_str(&s).ok())
-    } else {
-        None
-    };
-
-    // Prefer normalized JSON if present (extension uploads + future paths);
-    // fall back to BWS+PBN scan (legacy upload flow).
-    let data_json_path = session_dir.join("data.json");
-    if data_json_path.exists() {
-        let body = std::fs::read_to_string(&data_json_path).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Failed to read data.json: {}", e),
-            )
-        })?;
-        let game = bridge_club_analysis::parse_normalized(&body).map_err(|e| {
-            (
-                StatusCode::UNPROCESSABLE_ENTITY,
-                format!("Invalid normalized JSON: {}", e),
-            )
-        })?;
-        return bridge_club_analysis::build_sessions(&game, name_overrides.as_ref()).map_err(|e| {
-            (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                format!("Analysis error: {}", e),
-            )
-        });
-    }
-
-    // Find BWS and PBN files in session directory.
-    let mut bws_path = None;
-    let mut pbn_path = None;
-    if let Ok(entries) = std::fs::read_dir(&session_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            match ext.as_str() {
-                "bws" => bws_path = Some(path),
-                "pbn" => pbn_path = Some(path),
-                _ => {}
-            }
-        }
-    }
-
-    let bws_path = bws_path.ok_or((
-        StatusCode::NOT_FOUND,
-        "BWS file not found in session".to_string(),
-    ))?;
-
-    // Run the BWS+PBN adapter, then the builder; this also produces a
-    // SessionData list (single entry for BWS).
-    let normalized = bridge_club_analysis::data::adapters::pbn_bws::load_normalized(
-        &bws_path,
-        pbn_path.as_deref(),
-        name_overrides.as_ref(),
-    )
-    .map_err(|e| {
+/// Read the persisted normalized JSON for a session.
+fn read_data_json(
+    session_dir: &std::path::Path,
+) -> Result<bridge_club_analysis::NormalizedGame, (StatusCode, String)> {
+    let body = std::fs::read_to_string(session_dir.join("data.json")).map_err(|_| {
         (
-            StatusCode::UNPROCESSABLE_ENTITY,
-            format!("Failed to parse BWS/PBN: {}", e),
+            StatusCode::NOT_FOUND,
+            "Session has no data.json (uploaded before the schema-only refactor?)".to_string(),
         )
     })?;
-    bridge_club_analysis::build_sessions(&normalized, None).map_err(|e| {
+    bridge_club_analysis::parse_normalized(&body).map_err(|e| {
         (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            format!("Analysis error: {}", e),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            format!("Invalid normalized JSON in session: {}", e),
         )
     })
+}
+
+/// Serialize and persist the normalized JSON for a session.
+fn persist_data_json(
+    session_dir: &std::path::Path,
+    game: &bridge_club_analysis::NormalizedGame,
+) -> Result<(), (StatusCode, String)> {
+    let body = serde_json::to_string(game).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to serialize data.json: {}", e),
+        )
+    })?;
+    std::fs::write(session_dir.join("data.json"), body).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Failed to write data.json: {}", e),
+        )
+    })
+}
+
+/// Build the upload response from a freshly-enriched NormalizedGame and
+/// log an audit row. Used by both /api/upload and /api/upload-normalized
+/// so the response shape is identical.
+#[allow(clippy::too_many_arguments)]
+fn build_upload_response(
+    session_id: String,
+    game: &bridge_club_analysis::NormalizedGame,
+    has_pbn: bool,
+    state: &AppState,
+    anon_ip: &str,
+    browser: &str,
+    device: &str,
+    log_action: &str,
+    start: Instant,
+) -> Result<UploadResponse, (StatusCode, String)> {
+    let flat = upload_helpers::flatten_sessions(game);
+    let first = flat.first().ok_or((
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "No sessions in upload".to_string(),
+    ))?;
+
+    let session_infos: Vec<SessionInfo> = flat
+        .iter()
+        .map(|s| SessionInfo {
+            session_idx: s.session_idx,
+            label: s.label.clone(),
+            board_count: s.session.boards.len(),
+            result_count: upload_helpers::result_count(s.session),
+        })
+        .collect();
+
+    let summary = upload_helpers::summarize_players(first.session);
+    let boards = upload_helpers::board_numbers(first.session);
+    let result_count = upload_helpers::result_count(first.session);
+
+    let event_date = first.event_date.as_deref().map(reformat_event_date);
+
+    let duration = start.elapsed().as_millis() as u64;
+    let logger = AuditLogger::new(&state.log_dir);
+    logger.log_request(
+        anon_ip,
+        log_action,
+        &format!(
+            "sessions={} boards={} results={}",
+            flat.len(),
+            boards.len(),
+            result_count
+        ),
+        browser,
+        device,
+        duration,
+    );
+
+    let missing_names = summary.missing_players.len();
+    Ok(UploadResponse {
+        session_id,
+        event_name: first.event_name.clone(),
+        event_date,
+        players: summary.display_names,
+        board_count: boards.len(),
+        boards,
+        result_count,
+        has_pbn,
+        missing_names,
+        player_acbl: summary.player_acbl,
+        missing_players: summary.missing_players,
+        pair_acbl: summary.pair_acbl,
+        sessions: session_infos,
+    })
+}
+
+/// BWS dates look like "03/30/26 00:00:00" — extract just the date part and
+/// reformat as YYYY-MM-DD when possible. Pass-through otherwise.
+fn reformat_event_date(d: &str) -> String {
+    let date_part = d.split(' ').next().unwrap_or(d);
+    let parts: Vec<&str> = date_part.split('/').collect();
+    if parts.len() == 3 {
+        let year = if parts[2].len() == 2 {
+            format!("20{}", parts[2])
+        } else {
+            parts[2].to_string()
+        };
+        format!("{}-{}-{}", year, parts[0], parts[1])
+    } else {
+        date_part.to_string()
+    }
 }
 
 /// Check admin access via admin key or localhost.

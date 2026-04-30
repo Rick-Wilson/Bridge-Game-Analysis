@@ -2,6 +2,7 @@ mod analytics;
 mod api;
 mod observability;
 mod responses;
+mod upload_helpers;
 
 use axum::{
     extract::DefaultBodyLimit,
