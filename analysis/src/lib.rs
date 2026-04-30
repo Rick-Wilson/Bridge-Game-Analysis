@@ -1,24 +1,15 @@
-pub mod config;
 pub mod data;
 pub mod error;
-pub mod identity;
 
-// The analysis layer (matchpoint / DVF / cause-analysis) used to live here
-// too in `pub mod metrics`; it has been retired in favor of the JS port
-// shipped in the SPA. The remaining surface is schema definitions, the
-// BWS/PBN adapter, and a couple of schema-walk enrich-passes (tricks +
-// handviewer-url canonicalization) called at upload time. The data-layer
-// types that survived (GameData, SessionData, etc.) continue to back the
-// upload-response shaping; a follow-up commit shrinks them too.
-pub use config::Config;
+// The analyzer (matchpoint / DVF / cause-analysis) used to live in
+// `pub mod metrics`; it has been retired in favor of the JS port shipped
+// in the SPA. The crate is now scoped to the BWS/PBN → JSON translation
+// layer: schema definitions, the BWS/PBN adapter, and a couple of
+// schema-walk enrich-passes (tricks + handviewer-url canonicalization)
+// called at upload time. Everything that produced GameData / SessionData
+// / PlayerRegistry from the schema is gone — the web crate walks the
+// schema directly via web/src/upload_helpers.rs now.
 pub use data::{
-    build_sessions, enrich_handviewer_urls, enrich_tricks, load_game_data,
-    load_game_data_with_overrides, parse_normalized, render_par_display, BoardData, BoardResult,
-    ContractResult, GameData, NormalizedGame, ParContract, ParsedContract, SchemaParseError,
-    SeatPlayers, SessionData,
+    enrich_handviewer_urls, enrich_tricks, parse_normalized, NormalizedGame, SchemaParseError,
 };
 pub use error::{AnalysisError, Result};
-pub use identity::{normalize_name, Partnership, PartnershipDirection, Player, PlayerId};
-
-// Re-export useful types from bridge-parsers
-pub use bridge_parsers::{Direction, Doubled, Strain, Vulnerability};

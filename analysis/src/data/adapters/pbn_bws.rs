@@ -193,8 +193,6 @@ pub fn load_normalized(
                         dealer: pbn_board.dealer.unwrap_or(Direction::North),
                         vulnerability,
                         deal: Some(pbn_board.deal.clone()),
-                        double_dummy: None,
-                        par: Vec::new(),
                     };
                     // Apply the same display_name() transform the server's
                     // /api/board path uses (lowercase + first-letter-cap)
