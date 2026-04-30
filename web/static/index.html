@@ -208,11 +208,6 @@ tr.clickable-row:hover td { background: #e0e7ff; }
     <div class="event-info">
       <strong id="event-name"></strong><span id="event-date"></span>
       <select id="session-selector" class="hidden" style="margin-left:0.5rem;font-size:0.85rem;padding:0.25rem 0.5rem;"></select>
-      <button id="engine-chip"
-              title="Click to cycle: server / shadow / js. Shadow runs both engines and logs diffs."
-              style="margin-left:0.5rem;font-size:0.7rem;padding:0.2rem 0.5rem;border:1px solid var(--border);border-radius:999px;background:var(--surface);color:var(--text-muted);cursor:pointer;">
-        engine: shadow
-      </button>
     </div>
     <div style="display:flex;gap:0.375rem;align-items:center;">
       <button class="btn btn-sm btn-outline active" id="tab-players" onclick="switchView('players')">Players</button>
@@ -305,33 +300,10 @@ let cachedSessions = [];       // [{ session_idx, label, board_count, result_cou
 // cause analysis, ...) and adds a parity check that cross-validates against
 // the server's response on the same input.
 //
-// Engine selection. Defaults to "shadow" during the test phase so any user
-// running real games gets a parity check for free, console-visible. The URL
-// param (?engine=) overrides — useful for in-browser testing without
-// touching localStorage. localStorage is the user-clickable persistent
-// override (see the indicator chip in the event header).
-//   server  — only the Rust analyzer runs
-//   shadow  — server runs (rendered), JS runs in shadow, diffs counted
-//   js      — only the JS analyzer runs (no server round-trip per click)
-//
 // `cachedNormalized` holds the full normalized JSON document for the current
 // upload, fetched once on upload via /api/normalized. The JS analyzer reads
-// from it directly (it's the same shape the Rust schema deserializes from).
-const ENGINE_LS_KEY = 'analysis-engine';
-function resolveEngine() {
-  const fromUrl = new URLSearchParams(location.search).get('engine');
-  if (fromUrl) return fromUrl;
-  try {
-    const fromLs = localStorage.getItem(ENGINE_LS_KEY);
-    if (fromLs) return fromLs;
-  } catch (e) {}
-  return 'shadow';
-}
-let ANALYSIS_ENGINE = resolveEngine();
+// from it directly (same shape the Rust schema deserializes from).
 let cachedNormalized = null;
-// Running parity tally (rolling, since last "New File"). Updated by the
-// shadow-mode hooks, displayed in the engine chip.
-let parityStats = { ok: 0, diffs: 0, lastDiffs: [] };
 
 // Bridge-domain string constants. Keep these as plain strings (matching the
 // schema's wire shape) rather than wrapping them in objects — saves us a
@@ -415,6 +387,39 @@ function pickSession(game, sessionIdx) {
     }
   }
   return null;
+}
+
+/** Distinct player names in a session, sorted. Used to populate the player
+ *  grid; replaces the old server-side /api/players endpoint. */
+function derivePlayers(game, sessionIdx) {
+  const session = pickSession(game, sessionIdx);
+  if (!session) return [];
+  const seen = new Set();
+  const names = [];
+  for (const board of session.boards) {
+    for (const result of board.results) {
+      for (const pair of [result.ns_pair, result.ew_pair]) {
+        for (const p of pair?.players ?? []) {
+          const name = displayName(p.name);
+          const key = playerKey(p);
+          if (name && !seen.has(key)) { seen.add(key); names.push(name); }
+        }
+      }
+    }
+  }
+  names.sort((a, b) => a.localeCompare(b));
+  return names;
+}
+
+/** Distinct board numbers in a session, sorted. Replaces the old server-side
+ *  /api/boards endpoint. */
+function deriveBoards(game, sessionIdx) {
+  const session = pickSession(game, sessionIdx);
+  if (!session) return [];
+  return session.boards
+    .map(b => b.number)
+    .filter((n, i, arr) => arr.indexOf(n) === i)
+    .sort((a, b) => a - b);
 }
 
 /** Find the partnership direction this player sat in for this result.
@@ -1171,9 +1176,10 @@ function buildCauseContext(board, result, role, direction, boardCtx) {
 
 // ---- Orchestration: analyze_player / analyze_board ----
 //
-// These produce response objects in the same shape the server returns
-// (PlayerAnalysisResponse / BoardAnalysisResponse from web/src/responses.rs).
-// Used directly when ?engine=js, and cross-checked in shadow mode.
+// These produce response objects in the same shape the server used to
+// return when there was a server-side analyzer (PlayerAnalysisResponse /
+// BoardAnalysisResponse). The server endpoints are gone now; this is the
+// only analyzer path.
 
 /** Find which seat (N/E/S/W) a player sits at in this result, or null. */
 function findPlayerSeat(result, normName) {
@@ -1437,296 +1443,6 @@ function jsAnalyzeBoard(game, sessionIdx, boardNum) {
   };
 }
 
-// ---- Parity (shadow-mode) checks ----
-//
-// Each "compare<X>" function takes the server response and the same input the
-// server saw, runs the JS port over it, and returns an array of mismatches
-// with absolute diff > epsilon. Returns [] when everything matches.
-const PARITY_EPSILON = 0.05; // matchpoint_pct rounded to 2dp on the wire
-
-/** Compare server's per-board matchpoint_pct + declarer_vs_field for one
- *  player against the JS port's calculation. */
-function compareMatchpointsForPlayer(serverResp, normalized, sessionIdx, playerName) {
-  const session = pickSession(normalized, sessionIdx);
-  if (!session) return [{ kind: 'no-session', sessionIdx }];
-  const diffs = [];
-  for (const br of serverResp.board_results) {
-    const board = session.boards.find(b => b.number === br.board_number);
-    if (!board) { diffs.push({ kind: 'missing-board', board: br.board_number }); continue; }
-    const myResult = board.results.find(r => playerDirectionInResult(r, playerName) === br.direction);
-    if (!myResult) { diffs.push({ kind: 'no-result-row', board: br.board_number, dir: br.direction }); continue; }
-    const jsMp = calculateMatchpointPct(myResult, board.results, br.direction);
-    if (Math.abs(jsMp - br.matchpoint_pct) > PARITY_EPSILON) {
-      diffs.push({
-        kind: 'mp-mismatch',
-        board: br.board_number,
-        dir: br.direction,
-        server: br.matchpoint_pct,
-        js: jsMp,
-        delta: jsMp - br.matchpoint_pct,
-      });
-    }
-    // declarer_vs_field: server's PlayerBoardResult only populates this
-    // when the player was the declarer (see analysis/src/metrics/player.rs:
-    // `declarer_vs_field: if was_declarer { ... } else { None }`). Mirror
-    // that filter — comparing JS's unconditional value to server null
-    // would flag every Dummy/Defender row spuriously.
-    if (br.role === 'Declarer') {
-      const avgs = fieldTrickAverages(board.results);
-      const jsDvF = declarerVsField(myResult, avgs);
-      if (!nullableNumberEqual(jsDvF, br.declarer_vs_field, 0.001)) {
-        diffs.push({
-          kind: 'dvf-mismatch',
-          board: br.board_number,
-          dir: br.direction,
-          server: br.declarer_vs_field,
-          js: jsDvF,
-        });
-      }
-    }
-    // Full board context (field contract, board type, declarer flags, ...).
-    const ctx = computeBoardContext(board.results, board.par);
-    const counts = ctx.fieldContractCounts;
-    const jsField = ctx.fieldContract;
-    if (!fieldContractEquivalent(br.field_contract, jsField, counts)) {
-      diffs.push({
-        kind: 'field-contract-mismatch',
-        board: br.board_number,
-        server: br.field_contract,
-        js: jsField,
-      });
-    }
-    // board_type parity (PlayerBoardResultResponse exposes a per-board board_type)
-    if (!boardTypeEquivalent(br.board_type, ctx.boardType, board.results)) {
-      diffs.push({
-        kind: 'board-type-mismatch',
-        board: br.board_number,
-        server: br.board_type,
-        js: ctx.boardType,
-      });
-    }
-    if (matchedFieldContract(myResult.contract, jsField) !== br.matched_field_contract) {
-      // Only flag if the field contracts agree (otherwise it's a tie-break
-      // disagreement, not a real bug).
-      if (fieldContractEquivalent(br.field_contract, jsField, counts) &&
-          br.field_contract === jsField) {
-        diffs.push({
-          kind: 'matched-field-mismatch',
-          board: br.board_number,
-          server: br.matched_field_contract,
-          js: matchedFieldContract(myResult.contract, jsField),
-        });
-      }
-    }
-    // Cause + notes — only check when prior pieces agree, so a cause
-    // mismatch is unambiguously a cause-tree port bug, not a downstream
-    // effect of a different field contract / board type / competitive info.
-    // (Tie-equivalent board types aren't enough — a tied competitive primary
-    // strain shifts which cause branch fires, so insist on an EXACT match.)
-    if (br.field_contract === jsField && br.board_type === ctx.boardType) {
-      const causeCtx = buildCauseContext(board, myResult, br.role, br.direction, ctx);
-      causeCtx.matchpointPct = br.matchpoint_pct;
-      const { cause, notes } = determineCauseAndNotes(causeCtx);
-      if (cause !== br.cause) {
-        diffs.push({ kind: 'cause-mismatch', board: br.board_number, server: br.cause, js: cause, srvNotes: br.notes, jsNotes: notes });
-      } else if (notes !== br.notes) {
-        diffs.push({ kind: 'notes-mismatch', board: br.board_number, cause, server: br.notes, js: notes });
-      }
-    }
-  }
-  return diffs;
-}
-
-/** Compare two nullable numbers, treating both-null as equal. */
-function nullableNumberEqual(a, b, eps) {
-  if (a == null && b == null) return true;
-  if (a == null || b == null) return false;
-  return Math.abs(a - b) <= eps;
-}
-
-/** Compare server's per-table matchpoint_pct (NS + EW analysis) for one
- *  board against the JS port's calculation. */
-function compareMatchpointsForBoard(serverResp, normalized, sessionIdx, boardNum) {
-  const session = pickSession(normalized, sessionIdx);
-  if (!session) return [{ kind: 'no-session', sessionIdx }];
-  const board = session.boards.find(b => b.number === boardNum);
-  if (!board) return [{ kind: 'missing-board', board: boardNum }];
-  const diffs = [];
-  // Full BoardContext mirror, used for field_contract + board_type checks.
-  const ctx = computeBoardContext(board.results, board.par);
-  const counts = ctx.fieldContractCounts;
-  const jsField = ctx.fieldContract;
-  if (!fieldContractEquivalent(serverResp.field_contract, jsField, counts)) {
-    diffs.push({
-      kind: 'field-contract-mismatch',
-      board: boardNum,
-      server: serverResp.field_contract,
-      js: jsField,
-    });
-  }
-  if (!boardTypeEquivalent(serverResp.board_type, ctx.boardType, board.results)) {
-    diffs.push({
-      kind: 'board-type-mismatch',
-      board: boardNum,
-      server: serverResp.board_type,
-      js: ctx.boardType,
-    });
-  }
-  for (const row of serverResp.results) {
-    // Server returns rows ordered by NS matchpoint % desc; we identify the
-    // matching schema row by NS player names. The server passes names
-    // through display_name() (lowercase + first-letter-cap), so we have to
-    // apply the same transform to the schema side or "Rosemarie LaFrancesca"
-    // (raw schema) won't equal "Rosemarie Lafrancesca" (server response).
-    const r = board.results.find(r =>
-      displayName(r.ns_pair.players[0]?.name) === row.ns_player1 &&
-      displayName(r.ns_pair.players[1]?.name) === row.ns_player2
-    );
-    if (!r) { diffs.push({ kind: 'no-result-row', ns: row.ns_pair }); continue; }
-    const jsNs = calculateMatchpointPct(r, board.results, 'NS');
-    const jsEw = calculateMatchpointPct(r, board.results, 'EW');
-    if (Math.abs(jsNs - row.ns_analysis.matchpoint_pct) > PARITY_EPSILON) {
-      diffs.push({
-        kind: 'mp-mismatch', dir: 'NS', ns_pair: row.ns_pair,
-        server: row.ns_analysis.matchpoint_pct, js: jsNs,
-        delta: jsNs - row.ns_analysis.matchpoint_pct,
-      });
-    }
-    if (Math.abs(jsEw - row.ew_analysis.matchpoint_pct) > PARITY_EPSILON) {
-      diffs.push({
-        kind: 'mp-mismatch', dir: 'EW', ns_pair: row.ns_pair,
-        server: row.ew_analysis.matchpoint_pct, js: jsEw,
-        delta: jsEw - row.ew_analysis.matchpoint_pct,
-      });
-    }
-    // declarer_vs_field is the same value from both NS and EW perspectives
-    // (it's about the declarer, not the perspective). Compare each side.
-    const avgs = fieldTrickAverages(board.results);
-    const jsDvF = declarerVsField(r, avgs);
-    if (!nullableNumberEqual(jsDvF, row.ns_analysis.declarer_vs_field, 0.001)) {
-      diffs.push({ kind: 'dvf-mismatch', dir: 'NS', ns_pair: row.ns_pair,
-        server: row.ns_analysis.declarer_vs_field, js: jsDvF });
-    }
-    if (!nullableNumberEqual(jsDvF, row.ew_analysis.declarer_vs_field, 0.001)) {
-      diffs.push({ kind: 'dvf-mismatch', dir: 'EW', ns_pair: row.ns_pair,
-        server: row.ew_analysis.declarer_vs_field, js: jsDvF });
-    }
-    // matched_field_contract on each direction's analysis. Only check when
-    // server and JS picked the SAME contract as the field — otherwise we'd
-    // be comparing different sides of a tie.
-    if (serverResp.field_contract === jsField) {
-      const jsMatched = matchedFieldContract(r.contract, jsField);
-      if (jsMatched !== row.ns_analysis.matched_field_contract) {
-        diffs.push({ kind: 'matched-field-mismatch', dir: 'NS', ns_pair: row.ns_pair,
-          server: row.ns_analysis.matched_field_contract, js: jsMatched });
-      }
-      if (jsMatched !== row.ew_analysis.matched_field_contract) {
-        diffs.push({ kind: 'matched-field-mismatch', dir: 'EW', ns_pair: row.ns_pair,
-          server: row.ew_analysis.matched_field_contract, js: jsMatched });
-      }
-      // Cause + notes for both directions. Board view roles are simpler
-      // than player view: 'Declarer' for the side that declared, 'Defender'
-      // for the other side; passouts get 'Defender' for both. Insist on an
-      // EXACT board_type match (not just tie-equivalent) because tied
-      // competitive primaries shift which cause branch fires.
-      if (serverResp.board_type === ctx.boardType) {
-        const isPass = !r.contract || r.contract === 'PASS';
-        const declSide = isPass ? null : declaringDirection(r);
-        const nsRole = isPass ? 'Defender' : (declSide === 'NS' ? 'Declarer' : 'Defender');
-        const ewRole = isPass ? 'Defender' : (declSide === 'EW' ? 'Declarer' : 'Defender');
-        for (const [dir, role, sideAnalysis] of [['NS', nsRole, row.ns_analysis], ['EW', ewRole, row.ew_analysis]]) {
-          const causeCtx = buildCauseContext(board, r, role, dir, ctx);
-          causeCtx.matchpointPct = sideAnalysis.matchpoint_pct;
-          const { cause, notes } = determineCauseAndNotes(causeCtx);
-          if (cause !== sideAnalysis.cause) {
-            diffs.push({ kind: 'cause-mismatch', dir, ns_pair: row.ns_pair,
-              server: sideAnalysis.cause, js: cause, srvNotes: sideAnalysis.notes, jsNotes: notes });
-          } else if (notes !== sideAnalysis.notes) {
-            diffs.push({ kind: 'notes-mismatch', dir, ns_pair: row.ns_pair,
-              cause, server: sideAnalysis.notes, js: notes });
-          }
-        }
-      }
-    }
-  }
-  return diffs;
-}
-
-/** Update parity tally + chip after a shadow run. */
-function recordParity(label, diffs) {
-  if (diffs.length === 0) {
-    parityStats.ok++;
-    console.log(`[parity] ${label} — OK`);
-  } else {
-    parityStats.diffs++;
-    parityStats.lastDiffs = diffs.slice(0, 5);
-    console.warn(`[parity] ${label} — ${diffs.length} diff(s):`, diffs);
-  }
-  refreshEngineChip();
-}
-
-/** Run shadow-mode checks for the most recent player response. */
-async function runShadowPlayer(serverResp, playerName) {
-  if (ANALYSIS_ENGINE === 'server') return;
-  try {
-    const normalized = await loadNormalized();
-    const diffs = compareMatchpointsForPlayer(serverResp, normalized, currentSessionIdx, playerName);
-    recordParity(`player "${playerName}" (${serverResp.board_results.length} boards)`, diffs);
-  } catch (e) {
-    console.warn('[parity] player check failed:', e.message);
-  }
-}
-
-/** Run shadow-mode checks for the most recent board response. */
-async function runShadowBoard(serverResp, boardNum) {
-  if (ANALYSIS_ENGINE === 'server') return;
-  try {
-    const normalized = await loadNormalized();
-    const diffs = compareMatchpointsForBoard(serverResp, normalized, currentSessionIdx, boardNum);
-    recordParity(`board ${boardNum} (${serverResp.results.length} tables)`, diffs);
-  } catch (e) {
-    console.warn('[parity] board check failed:', e.message);
-  }
-}
-
-/** Re-render the engine chip text + color from current state. */
-function refreshEngineChip() {
-  const chip = document.getElementById('engine-chip');
-  if (!chip) return;
-  const eng = ANALYSIS_ENGINE;
-  let text = `engine: ${eng}`;
-  let bg = 'var(--surface)';
-  let color = 'var(--text-muted)';
-  if (eng === 'shadow') {
-    if (parityStats.ok + parityStats.diffs > 0) {
-      text = parityStats.diffs === 0
-        ? `parity ✓ ${parityStats.ok}/${parityStats.ok}`
-        : `parity ${parityStats.ok}/${parityStats.ok + parityStats.diffs} (${parityStats.diffs} ⚠)`;
-      bg = parityStats.diffs === 0 ? '#e8f5e8' : '#fdf6e7';
-      color = parityStats.diffs === 0 ? '#2a662a' : '#8a5a00';
-    }
-  } else if (eng === 'js') {
-    text = 'engine: JS only';
-    bg = '#e8f0f8';
-    color = '#1e4080';
-  }
-  chip.textContent = text;
-  chip.style.background = bg;
-  chip.style.color = color;
-}
-
-/** Cycle the engine: server → shadow → js → server. Persists in localStorage
- *  and reloads so the new engine takes effect cleanly (cachedNormalized,
- *  parityStats, and any in-flight server response all reset). */
-function cycleEngine() {
-  const order = ['server', 'shadow', 'js'];
-  const cur = order.indexOf(ANALYSIS_ENGINE);
-  const next = order[(cur + 1) % order.length];
-  try { localStorage.setItem(ENGINE_LS_KEY, next); } catch (e) {}
-  location.reload();
-}
-
-// =========================================================================
 
 /** Build a query-string suffix that always passes session, plus session_idx
  *  when more than one session is in the upload. */
@@ -1835,15 +1551,6 @@ function applyUploadResponse(data, opts) {
   document.getElementById('pbn-notice').classList.toggle('hidden', pbnHidden);
   renderSessionSelector();
   showNamesNotice(data);
-  // Initialize the engine chip + click handler now that the event header
-  // is visible. Reset parity stats since this is a fresh upload.
-  parityStats = { ok: 0, diffs: 0, lastDiffs: [] };
-  refreshEngineChip();
-  const chip = document.getElementById('engine-chip');
-  if (chip && !chip.dataset.wired) {
-    chip.dataset.wired = '1';
-    chip.addEventListener('click', cycleEngine);
-  }
   switchView('players');
 }
 
@@ -1866,12 +1573,9 @@ function renderSessionSelector() {
     // Refresh the cached lists from the new session and re-render.
     try {
       showLoading(true); showError('');
-      const [players, boards] = await Promise.all([
-        getJSON(`${BASE}/api/players?${sessionParams()}`),
-        getJSON(`${BASE}/api/boards?${sessionParams()}`),
-      ]);
-      cachedPlayers = players.players;
-      cachedBoards = boards.boards;
+      const game = await loadNormalized();
+      cachedPlayers = derivePlayers(game, currentSessionIdx);
+      cachedBoards = deriveBoards(game, currentSessionIdx);
       currentBoard = null;
       currentPlayerName = null;
       hideAll();
@@ -1922,10 +1626,12 @@ async function autoFillFromStorage(data) {
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(toApply)
   });
-  // Refetch upload-like info (we only need the updated player list + missing_players)
-  const refreshed = await getJSON(`${BASE}/api/players?${sessionParams()}`);
-  // Rebuild a data object that looks like an upload response with updates
-  data.players = refreshed.players;
+  // Server applied the overrides to the stored normalized.json. Drop the
+  // local cache so the next loadNormalized() refetches the canonical state,
+  // then derive the refreshed player list from there.
+  cachedNormalized = null;
+  const game = await loadNormalized();
+  data.players = derivePlayers(game, currentSessionIdx);
   // Remove now-filled placeholders
   data.missing_players = data.missing_players.filter(mp => !toApply[mp.acbl_number]);
   data.missing_names = data.missing_players.length;
@@ -1998,9 +1704,10 @@ document.getElementById('paste-names-apply').addEventListener('click', async () 
   for (const [acbl, name] of Object.entries(overrides)) stored[acbl] = name;
   saveStoredNames(stored);
 
-  // Refetch player list and update state
-  const updated = await getJSON(`${BASE}/api/players?${sessionParams()}`);
-  cachedPlayers = updated.players;
+  // Refetch the normalized JSON (server applied the overrides) and re-derive.
+  cachedNormalized = null;
+  const game = await loadNormalized();
+  cachedPlayers = derivePlayers(game, currentSessionIdx);
   // Remove now-filled placeholders from missing_players
   lastUpload.missing_players = lastUpload.missing_players.filter(mp => !overrides[mp.acbl_number]);
   lastUpload.missing_names = lastUpload.missing_players.length;
@@ -2090,18 +1797,10 @@ async function selectPlayer(btn, name) {
   currentPlayerName = name;
   showLoading(true); hideAll(); showError('');
   try {
-    let data;
-    if (ANALYSIS_ENGINE === 'js') {
-      const game = await loadNormalized();
-      data = jsAnalyzePlayer(game, currentSessionIdx, name);
-      if (!data) throw new Error(`Player '${name}' not found`);
-    } else {
-      const res = await fetch(`${BASE}/api/player?${sessionParams()}&name=${encodeURIComponent(name)}`);
-      if (!res.ok) throw new Error(await res.text());
-      data = await res.json();
-    }
+    const game = await loadNormalized();
+    const data = jsAnalyzePlayer(game, currentSessionIdx, name);
+    if (!data) throw new Error(`Player '${name}' not found`);
     renderPlayer(data);
-    if (ANALYSIS_ENGINE === 'shadow') runShadowPlayer(data, name);
     // Hide the player grid once results show
     document.getElementById('player-grid').classList.add('hidden');
   } catch (e) { showError(e.message); }
@@ -2172,18 +1871,10 @@ async function selectBoard(btn, num, keepPlayer) {
   document.getElementById('player-results').classList.add('hidden');
   showLoading(true); showError('');
   try {
-    let data;
-    if (ANALYSIS_ENGINE === 'js') {
-      const game = await loadNormalized();
-      data = jsAnalyzeBoard(game, currentSessionIdx, num);
-      if (!data) throw new Error(`Board ${num} not found`);
-    } else {
-      const res = await fetch(`${BASE}/api/board?${sessionParams()}&num=${num}`);
-      if (!res.ok) throw new Error(await res.text());
-      data = await res.json();
-    }
+    const game = await loadNormalized();
+    const data = jsAnalyzeBoard(game, currentSessionIdx, num);
+    if (!data) throw new Error(`Board ${num} not found`);
     renderBoard(data);
-    if (ANALYSIS_ENGINE === 'shadow') runShadowBoard(data, num);
   } catch (e) { showError(e.message); }
   finally { showLoading(false); }
 }
