@@ -6,9 +6,7 @@
 
 use std::time::Instant;
 
-use axum::{
-    body::Body, extract::MatchedPath, http::Request, middleware::Next, response::Response,
-};
+use axum::{body::Body, extract::MatchedPath, http::Request, middleware::Next, response::Response};
 use once_cell::sync::Lazy;
 use prometheus::{
     register_histogram_vec, register_int_counter_vec, HistogramVec, IntCounterVec, Registry,

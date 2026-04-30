@@ -38,7 +38,10 @@ pub async fn healthz(
 /// Prometheus text-format metrics endpoint.
 pub async fn metrics() -> impl IntoResponse {
     (
-        [(axum::http::header::CONTENT_TYPE, "text/plain; version=0.0.4")],
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "text/plain; version=0.0.4",
+        )],
         crate::observability::metrics::render(),
     )
 }
