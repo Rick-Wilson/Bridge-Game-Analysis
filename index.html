@@ -3001,11 +3001,11 @@ async function runBatch(batchItems) {
 
   if (!hasTracked) {
     setStatus('Loading first event…', '', 0);
-    const first = batchItems[0];
     let firstGame;
     try {
-      enrichTricks(first.envelope);
-      firstGame = first.envelope;
+      const firstEnvelope = await decompressJSON(batchItems[0].compressed);
+      enrichTricks(firstEnvelope);
+      firstGame = firstEnvelope;
       cachedNormalized = firstGame;
     } catch (e) {
       setStatus('Error loading first event', e.message);
@@ -3033,8 +3033,9 @@ async function runBatch(batchItems) {
   for (let i = startIdx; i < total; i++) {
     setStatus('Importing history…', `Saving event ${i + 1} of ${total}…`, Math.round((i + 1) / total * 100));
     try {
-      enrichTricks(batchItems[i].envelope);
-      cachedNormalized = batchItems[i].envelope;
+      const env = await decompressJSON(batchItems[i].compressed);
+      enrichTricks(env);
+      cachedNormalized = env;
       currentSessionIdx = 0;
       autoSaveTrackedPlayers(cachedNormalized);
       const batchMeta = deriveEventMeta();
@@ -3102,6 +3103,17 @@ async function bootstrapAnalyze() {
     runBatch(batchItems);
     return;
   }
+
+  // Check for a storage-overflow error written by the content script.
+  try {
+    const handoffErr = sessionStorage.getItem('bridge-handoff-error');
+    if (handoffErr) {
+      sessionStorage.removeItem('bridge-handoff-error');
+      showLoading(false);
+      showAnalyzeError(`Browser storage was too full to receive the game data: ${handoffErr}. Try importing fewer events at once, or clear history.`);
+      return;
+    }
+  } catch (e) {}
 
   // One-shot consume for single-game path.
   try {
