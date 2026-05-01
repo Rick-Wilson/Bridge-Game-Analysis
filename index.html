@@ -2910,13 +2910,11 @@ async function runBatch(batchItems) {
 
   if (!hasTracked) {
     setStatus('Loading first event…', '', 0);
-    sessionId = batchItems[0].session_id;
-    cachedNormalized = null;
-    lastUpload = null;
-    currentSessionIdx = 0;
+    const first = batchItems[0];
     let firstGame;
     try {
-      firstGame = await getJSON(`${BASE}/api/normalized?session=${sessionId}`);
+      enrichTricks(first.envelope);
+      firstGame = first.envelope;
       cachedNormalized = firstGame;
     } catch (e) {
       setStatus('Error loading first event', e.message);
@@ -2941,12 +2939,11 @@ async function runBatch(batchItems) {
   let skipped = 0;
   for (let i = startIdx; i < total; i++) {
     setStatus('Importing history…', `Saving event ${i + 1} of ${total}…`, Math.round((i + 1) / total * 100));
-    sessionId = batchItems[i].session_id;
-    cachedNormalized = null;
-    lastUpload = null;
-    currentSessionIdx = 0;
     try {
-      await loadNormalized();
+      enrichTricks(batchItems[i].envelope);
+      cachedNormalized = batchItems[i].envelope;
+      currentSessionIdx = 0;
+      autoSaveTrackedPlayers(cachedNormalized);
     } catch (e) {
       skipped++;
     }
