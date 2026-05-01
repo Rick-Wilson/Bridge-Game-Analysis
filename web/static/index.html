@@ -207,7 +207,7 @@ tr.clickable-row:hover td { background: #e0e7ff; }
     <summary style="cursor:pointer;color:var(--primary);font-size:0.85rem;font-weight:500;">Where do I find these files?</summary>
     <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;margin-top:0.5rem;">
       <p style="font-size:0.85rem;margin-bottom:0.75rem;">On your game's page at <strong>ACBL Live for Clubs</strong>, download both files using the links in the top-right <strong>Reference Data</strong> section:</p>
-      <img src="{{BASE_PATH}}/static/acbl-download-help.png" alt="ACBL Live download links" style="max-width:100%;border:1px solid var(--border);border-radius:var(--radius);">
+      <img src="/static/acbl-download-help.png" alt="ACBL Live download links" style="max-width:100%;border:1px solid var(--border);border-radius:var(--radius);">
       <p style="font-size:0.8rem;color:var(--text-muted);margin-top:0.5rem;">Then click <strong>Choose Files</strong> above and select both files from your Downloads folder.</p>
     </div>
   </details>
@@ -358,7 +358,11 @@ tr.clickable-row:hover td { background: #e0e7ff; }
 </div>
 
 <script>
-const BASE = '{{BASE_PATH}}';
+const BASE = (() => {
+  const h = window.location.hostname;
+  if (h === 'localhost' || h === '127.0.0.1') return '';
+  return 'https://api.bridge-classroom.com';
+})();
 let sessionId = null;
 let cachedPlayers = [];
 let cachedBoards = [];
@@ -414,6 +418,16 @@ function displayName(name) {
  *  first call so repeated player/board navigations are free. */
 async function loadNormalized() {
   if (cachedNormalized) return cachedNormalized;
+  // Prefer sessionStorage (set inline from upload response — no second fetch needed).
+  try {
+    const stored = sessionStorage.getItem('bc-game');
+    if (stored) {
+      cachedNormalized = JSON.parse(stored);
+      try { autoSaveTrackedPlayers(cachedNormalized); } catch (e) {}
+      return cachedNormalized;
+    }
+  } catch (e) {}
+  // Batch fallback: session_id was stored server-side, fetch it.
   if (!sessionId) throw new Error('no active session');
   cachedNormalized = await getJSON(`${BASE}/api/normalized?session=${sessionId}`);
   try { autoSaveTrackedPlayers(cachedNormalized); } catch (e) {}
@@ -1552,6 +1566,7 @@ function resetSessionState() {
   currentBoard = null;
   currentPlayerName = null;
   cachedNormalized = null;
+  try { sessionStorage.removeItem('bc-game'); } catch (e) {}
 }
 
 /** Fetch + JSON wrapper that throws the response body text (not a JSON
@@ -1620,6 +1635,13 @@ async function doUpload(files, addTo) {
  *  build session selector, render the player view. */
 function applyUploadResponse(data, opts) {
   opts = opts || {};
+  // Cache inline normalized JSON in sessionStorage so loadNormalized() skips
+  // the second fetch and works offline after the initial upload.
+  if (data.normalized) {
+    cachedNormalized = data.normalized;
+    try { sessionStorage.setItem('bc-game', JSON.stringify(data.normalized)); } catch (e) {}
+    try { autoSaveTrackedPlayers(data.normalized); } catch (e) {}
+  }
   cachedPlayers = data.players;
   cachedBoards = data.boards;
   cachedSessions = data.sessions || [];
@@ -1674,6 +1696,32 @@ function renderSessionSelector() {
 
 // ==================== Name Storage / Overrides ====================
 const NAMES_KEY = 'bridge-analysis-names';
+
+/** Apply ACBL-number → name overrides to a game in memory. Mirrors the
+ *  server-side apply_name_overrides in upload_helpers.rs. */
+function applyNameOverridesClient(game, overrides) {
+  for (const t of game.tournaments || []) {
+    for (const ev of t.events || []) {
+      for (const s of ev.sessions || []) {
+        for (const b of s.boards || []) {
+          for (const r of b.results || []) {
+            for (const pair of [r.ns_pair, r.ew_pair]) {
+              for (const p of pair?.players || []) {
+                if (p.acbl_id && overrides[p.acbl_id]) p.name = overrides[p.acbl_id];
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/** Persist the current cachedNormalized to sessionStorage after an in-memory mutation. */
+function flushNormalizedToStorage() {
+  if (!cachedNormalized) return;
+  try { sessionStorage.setItem('bc-game', JSON.stringify(cachedNormalized)); } catch (e) {}
+}
 let lastUpload = null; // most recent upload response, for name-override flow
 
 function getStoredNames() {
@@ -1697,7 +1745,7 @@ function mergeNamesToStorage(playerAcbl) {
 }
 
 /** If any missing_players have ACBL numbers we know from localStorage,
- *  send them to the server and reload the session data. */
+ *  apply them client-side to the inline normalized JSON. */
 async function autoFillFromStorage(data) {
   if (!data.missing_players || data.missing_players.length === 0) return data;
   const stored = getStoredNames();
@@ -1708,24 +1756,15 @@ async function autoFillFromStorage(data) {
     }
   }
   if (Object.keys(toApply).length === 0) return data;
-  await fetch(`${BASE}/api/names?session=${sessionId}`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(toApply)
-  });
-  // Server applied the overrides to the stored normalized.json. Drop the
-  // local cache so the next loadNormalized() refetches the canonical state,
-  // then derive the refreshed player list from there.
-  cachedNormalized = null;
-  const game = await loadNormalized();
-  data.players = derivePlayers(game, currentSessionIdx);
-  // Remove now-filled placeholders
+  // Apply overrides to the already-cached normalized game and flush to sessionStorage.
+  if (cachedNormalized) {
+    applyNameOverridesClient(cachedNormalized, toApply);
+    flushNormalizedToStorage();
+    data.players = derivePlayers(cachedNormalized, currentSessionIdx);
+  }
   data.missing_players = data.missing_players.filter(mp => !toApply[mp.acbl_number]);
   data.missing_names = data.missing_players.length;
-  // Merge player_acbl entries for the newly named players
-  for (const [acbl, name] of Object.entries(toApply)) {
-    data.player_acbl[name] = acbl;
-  }
+  for (const [acbl, name] of Object.entries(toApply)) data.player_acbl[name] = acbl;
   return data;
 }
 
@@ -1778,22 +1817,14 @@ document.getElementById('paste-names-apply').addEventListener('click', async () 
     return;
   }
 
-  // Submit to server
-  const res = await fetch(`${BASE}/api/names?session=${sessionId}`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(overrides)
-  });
-  if (!res.ok) { resultEl.textContent = 'Server error: ' + await res.text(); return; }
-
-  // Save to localStorage
+  // Apply client-side and save to localStorage.
   const stored = getStoredNames();
   for (const [acbl, name] of Object.entries(overrides)) stored[acbl] = name;
   saveStoredNames(stored);
 
-  // Refetch the normalized JSON (server applied the overrides) and re-derive.
-  cachedNormalized = null;
   const game = await loadNormalized();
+  applyNameOverridesClient(game, overrides);
+  flushNormalizedToStorage();
   cachedPlayers = derivePlayers(game, currentSessionIdx);
   // Remove now-filled placeholders from missing_players
   lastUpload.missing_players = lastUpload.missing_players.filter(mp => !overrides[mp.acbl_number]);
@@ -2292,9 +2323,9 @@ async function fetchBBA(dealInfo) {
   const bbaEl = document.getElementById('bba-section');
   bbaEl.innerHTML = '<div class="bba-loading">Loading BBA auction...</div>';
   try {
-    const res = await fetch(`${BASE}/api/bba-proxy`, {
+    const res = await fetch('https://bba.harmonicsystems.com/api/auction/generate', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'X-Client-Version': 'ClubGameAnalysis' },
       body: JSON.stringify({ deal: { pbn: dealInfo.pbn, dealer: dealInfo.dealer, vulnerability: dealInfo.vulnerability } })
     });
     if (!res.ok) { bbaEl.innerHTML = '<div class="bba-loading">BBA unavailable</div>'; return; }
@@ -2692,18 +2723,15 @@ const BATCH_KEY = 'pending-batch';
 const SUPPORTED_MAJOR = 1;
 
 function isAnalyzePath() {
-  // Strip the base path prefix so this works in subdirectory deployments.
   const path = window.location.pathname;
-  const base = BASE || '';
-  const tail = base && path.startsWith(base) ? path.slice(base.length) : path;
-  return tail === '/analyze' || tail === '/analyze/';
+  return path === '/analyze' || path === '/analyze/';
 }
 
 function showAnalyzeEmpty() {
   uploadArea.classList.add('hidden');
   document.getElementById('download-help').classList.add('hidden');
   const link = document.getElementById('analyze-empty-link');
-  if (link) link.href = (BASE || '') + '/';
+  if (link) link.href = '/';
   document.getElementById('analyze-empty').classList.remove('hidden');
 }
 
@@ -2711,7 +2739,7 @@ function showAnalyzeError(detail) {
   uploadArea.classList.add('hidden');
   document.getElementById('download-help').classList.add('hidden');
   const link = document.getElementById('analyze-error-link');
-  if (link) link.href = (BASE || '') + '/';
+  if (link) link.href = '/';
   document.getElementById('analyze-error-detail').textContent = detail || '';
   document.getElementById('analyze-error').classList.remove('hidden');
 }
