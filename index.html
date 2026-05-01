@@ -2572,18 +2572,25 @@ function eventCacheKeySet() {
 }
 
 async function loadHistoryEvent(eventId, sourceUrl) {
-  const normalized = await loadFromEventCache(eventId);
-  if (normalized) {
-    enrichTricks(normalized);
-    const data = deriveUploadResponse(normalized);
-    mergeNamesToStorage(data.player_acbl);
-    applyUploadResponse(data, { hasPbn: true });
-    switchView('players');
-  } else if (sourceUrl) {
-    window.open(sourceUrl + '#bc-analyze', '_blank');
-  } else {
-    alert('This event is not in the local cache. Re-extract it using the extension.');
+  // Check synchronously first — window.open must happen before any await
+  // or the browser treats it as an unprompted popup and blocks it.
+  if (!eventCacheKeySet().has(eventId)) {
+    if (sourceUrl) window.open(sourceUrl + '#bc-analyze', '_blank');
+    else alert('This event is not cached. Re-extract it using the extension.');
+    return;
   }
+  const normalized = await loadFromEventCache(eventId);
+  if (!normalized) {
+    // Cache entry existed but decompression failed — fall back gracefully.
+    if (sourceUrl) window.open(sourceUrl + '#bc-analyze', '_blank');
+    else alert('Cache read failed. Re-extract it using the extension.');
+    return;
+  }
+  enrichTricks(normalized);
+  const data = deriveUploadResponse(normalized);
+  mergeNamesToStorage(data.player_acbl);
+  applyUploadResponse(data, { hasPbn: true });
+  switchView('players');
 }
 
 /** Convert strat integer (1-based) to letter: 1→A, 2→B, 3→C … */
@@ -2746,11 +2753,12 @@ function renderHistoryPlayer(playerName) {
     const errorPct = p.boards > 0 ? (errors / p.boards * 100).toFixed(0) : '-';
     const mpColor = p.mp >= 50 ? 'mp-good' : 'mp-bad';
     const isCached = cachedKeys.has(e.id);
+    const cacheIcon = isCached ? ` <span style="color:var(--good);font-size:0.8em" title="Cached locally — click name to load instantly">⟳</span>` : '';
     const reExtractLink = e.source_url
       ? ` <a href="${e.source_url}#bc-analyze" target="_blank" rel="noopener" title="Re-extract with extension" style="color:var(--text-muted);font-size:0.85em;text-decoration:none">↗</a>`
       : '';
     const eventLink = e.source_url
-      ? `<span style="cursor:pointer;color:var(--primary);text-decoration:underline" title="${isCached ? 'Load from local cache' : 'Open source page for extraction'}" onclick="loadHistoryEvent(${JSON.stringify(e.id)},${JSON.stringify(e.source_url||null)})">${e.event_name}</span>${reExtractLink}`
+      ? `<span style="cursor:pointer;color:var(--primary);text-decoration:underline" title="${isCached ? 'Load from local cache' : 'Open source page for extraction'}" onclick="loadHistoryEvent(${JSON.stringify(e.id)},${JSON.stringify(e.source_url||null)})">${e.event_name}</span>${cacheIcon}${reExtractLink}`
       : e.event_name;
     const stratCell = p.strat != null ? stratLabel(p.strat) : '—';
     const mpAwardCell = p.mp_award
@@ -3171,6 +3179,8 @@ async function bootstrapAnalyze() {
 
 if (isAnalyzePath()) {
   bootstrapAnalyze();
+} else if (!cachedNormalized && getHistory().events.length > 0) {
+  switchView('history');
 }
 </script>
 </body>
