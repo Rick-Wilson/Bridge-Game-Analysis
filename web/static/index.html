@@ -212,6 +212,7 @@ tr.clickable-row:hover td { background: #e0e7ff; }
     <div style="display:flex;gap:0.375rem;align-items:center;">
       <button class="btn btn-sm btn-outline active" id="tab-players" onclick="switchView('players')">Players</button>
       <button class="btn btn-sm btn-outline" id="tab-boards" onclick="switchView('boards')">Boards</button>
+      <button class="btn btn-sm" id="save-json-btn" style="margin-left:0.5rem;" title="Download the normalized JSON for this session">Save JSON</button>
       <button class="btn btn-sm" id="new-file-btn" style="margin-left:0.5rem;">New File</button>
     </div>
   </div>
@@ -1738,6 +1739,32 @@ function parsePairText(text) {
 document.getElementById('pbn-add-input').addEventListener('change', async (e) => {
   const file = e.target.files[0];
   if (file && sessionId) doUpload([file], sessionId);
+});
+document.getElementById('save-json-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('save-json-btn');
+  try {
+    const data = cachedNormalized ?? await loadNormalized();
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const t = data?.tournaments?.[0];
+    const source = data?.source ?? 'bridge';
+    const sanction = t?.sanction ?? 'unknown';
+    const date = t?.events?.[0]?.date ?? data?.fetched_at?.slice(0, 10) ?? 'unknown';
+    a.download = `${source}-${sanction}-${date}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    const orig = btn.textContent;
+    btn.textContent = 'Saved!';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  } catch (e) {
+    btn.textContent = 'Error';
+    setTimeout(() => { btn.textContent = 'Save JSON'; }, 2000);
+  }
 });
 document.getElementById('new-file-btn').addEventListener('click', () => {
   resetSessionState();
