@@ -274,6 +274,7 @@ tr.clickable-row:hover td { background: #e0e7ff; }
   <div id="player-results" class="hidden">
     <div id="player-summary" class="summary"></div>
     <div id="player-summary2" class="summary"></div>
+    <div id="player-summary3" class="summary"></div>
     <div class="results-table">
       <table><thead id="player-thead"></thead><tbody id="player-tbody"></tbody></table>
     </div>
@@ -1561,6 +1562,8 @@ function resetSessionState() {
   currentSessionIdx = 0;
   currentBoard = null;
   currentPlayerName = null;
+  currentPlayerData = null;
+  causeFilter = null;
   cachedNormalized = null;
   try { sessionStorage.removeItem('bc-game'); } catch (e) {}
 }
@@ -1934,8 +1937,17 @@ function showBoardGrid() {
   grid.classList.remove('hidden');
   const arrows = `<button class="nav-arrow" onclick="navBoard(-1)" title="Previous board">\u25C0</button>`;
   const arrowR = `<button class="nav-arrow" onclick="navBoard(1)" title="Next board">\u25B6</button>`;
-  document.getElementById('board-numbers').innerHTML = arrows +
-    cachedBoards.map(num =>
+  const list = activeBoardList();
+  const backBtn = currentPlayerName
+    ? `<button class="btn btn-sm btn-outline" style="margin-right:0.5rem" onclick="goToPlayer('${esc(currentPlayerName)}')">\u2190 ${esc(currentPlayerName)}</button>`
+    : '';
+  const filterLabel = causeFilter
+    ? `<span style="margin-left:0.5rem;font-size:0.8rem;color:var(--text-muted)">Showing <span class="cause cause-${causeFilter}">${causeFilter}</span> boards only &mdash; <a href="javascript:void(0)" onclick="setCauseFilter('${causeFilter}')">clear</a></span>`
+    : '';
+  document.getElementById('board-numbers').innerHTML =
+    backBtn + filterLabel +
+    arrows +
+    list.map(num =>
       `<button onclick="selectBoard(this,${num})" ${num === currentBoard ? 'class="active"' : ''}>${num}</button>`
     ).join('') + arrowR;
 }
@@ -1959,6 +1971,8 @@ async function selectPlayer(btn, name) {
 }
 
 function renderPlayer(data) {
+  currentPlayerData = data;
+  causeFilter = null;
   document.getElementById('player-results').classList.remove('hidden');
   const mpColor = data.avg_matchpoint_pct >= 50 ? 'mp-good' : 'mp-bad';
   const partners = data.partners.map(p =>
@@ -1981,6 +1995,16 @@ function renderPlayer(data) {
     <div class="stat"><div class="stat-value">${f(data.avg_declarer_vs_field, v=>(v>=0?'+':'')+v.toFixed(2))}</div><div class="stat-label">Decl vs Field</div></div>
     <div class="stat"><div class="stat-value">${data.field_contract_pct.toFixed(0)}%</div><div class="stat-label">Field Contract</div></div>
   `;
+  const causeCounts = { Auction: 0, Play: 0, Defense: 0 };
+  for (const r of data.board_results) if (r.cause in causeCounts) causeCounts[r.cause]++;
+  const causeStatBtn = (cause) => causeCounts[cause]
+    ? `<div class="stat" style="cursor:pointer" onclick="switchView('boards');setCauseFilter('${cause}')" title="Show only ${cause} error boards">
+        <div class="stat-value"><span class="cause cause-${cause}">${causeCounts[cause]}</span></div>
+        <div class="stat-label">${cause} Error${causeCounts[cause] !== 1 ? 's' : ''}</div>
+       </div>`
+    : `<div class="stat"><div class="stat-value" style="color:var(--text-muted)">0</div><div class="stat-label">${cause} Errors</div></div>`;
+  document.getElementById('player-summary3').innerHTML =
+    causeStatBtn('Auction') + causeStatBtn('Play') + causeStatBtn('Defense');
 
   document.getElementById('player-thead').innerHTML = `<tr>
     <th>Board</th><th>Dir</th><th>Contract</th><th class="text-right">Score</th>
@@ -2044,14 +2068,33 @@ function goToBoard(num) {
   selectBoard(null, num, true); // keepPlayer=true to highlight their row
 }
 
+function activeBoardList() {
+  if (!causeFilter || !currentPlayerData) return cachedBoards;
+  const filtered = currentPlayerData.board_results
+    .filter(r => r.cause === causeFilter)
+    .map(r => r.board_number);
+  return cachedBoards.filter(n => filtered.includes(n));
+}
+
+function setCauseFilter(cause) {
+  causeFilter = causeFilter === cause ? null : cause;
+  showBoardGrid();
+  const list = activeBoardList();
+  if (list.length) goToBoard(list.includes(currentBoard) ? currentBoard : list[0]);
+}
+
 function navBoard(delta) {
-  if (!currentBoard) { if (cachedBoards.length) goToBoard(cachedBoards[0]); return; }
-  const idx = cachedBoards.indexOf(currentBoard);
+  const list = activeBoardList();
+  if (!list.length) return;
+  if (!currentBoard) { goToBoard(list[0]); return; }
+  const idx = list.indexOf(currentBoard);
   const next = idx + delta;
-  if (next >= 0 && next < cachedBoards.length) goToBoard(cachedBoards[next]);
+  if (next >= 0 && next < list.length) goToBoard(list[next]);
 }
 
 let currentBoardData = null;
+let currentPlayerData = null;
+let causeFilter = null;
 let activeRowIdx = 0;
 let cachedDDTricks = null; // Store DD data for re-rendering on row change
 let cachedBBAContract = null; // {seat, suitIdx} from BBA auction, or null
