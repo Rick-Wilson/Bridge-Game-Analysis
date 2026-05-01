@@ -4,19 +4,24 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
 jobs:
-  deploy-github-pages:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
-      - name: Deploy to GitHub Pages
-        uses: peaceiris/actions-gh-pages@v4
+      - name: Copy index.html to 404.html for SPA routing on GitHub Pages
+        run: cp index.html 404.html
+      - uses: actions/configure-pages@v4
+      - uses: actions/upload-pages-artifact@v3
         with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: .
-          publish_branch: gh-pages
-          include_files: index.html,_redirects,static/**
-          # Make /analyze work on GitHub Pages via 404 fallback trick
-          destination_dir: .
+          path: .
+      - uses: actions/deploy-pages@v4
+        id: deployment
