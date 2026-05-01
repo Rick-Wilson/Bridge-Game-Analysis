@@ -1,0 +1,3 @@
+[workspace]
+members = ["parse-files", "web"]
+resolver = "2"

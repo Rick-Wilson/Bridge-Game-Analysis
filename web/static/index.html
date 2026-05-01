@@ -1,0 +1,2973 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Club Game Analysis</title>
+<style>
+:root {
+  --bg: #f8f9fa; --surface: #ffffff; --text: #212529; --text-muted: #6c757d;
+  --primary: #2563eb; --primary-hover: #1d4ed8; --border: #dee2e6;
+  --good: #16a34a; --lucky: #2563eb; --play: #dc2626; --defense: #ea580c;
+  --auction: #9333ea; --unlucky: #6b7280; --radius: 8px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: var(--bg); color: var(--text); line-height: 1.5; min-height: 100vh; }
+.container { max-width: 1100px; margin: 0 auto; padding: 0.5rem 1rem; }
+header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 0.375rem 0; margin-bottom: 0.75rem; }
+header h1 { font-size: 0.95rem; font-weight: 600; text-align: center; }
+header h1 span { color: var(--text-muted); font-weight: 400; }
+
+.upload-area { background: var(--surface); border: 2px dashed var(--border); border-radius: var(--radius); padding: 2rem; text-align: center; margin-bottom: 1.5rem; transition: border-color 0.2s; }
+.upload-area.dragover { border-color: var(--primary); }
+.upload-area p { color: var(--text-muted); margin-bottom: 1rem; }
+.upload-area input[type="file"] { display: none; }
+
+.btn { display: inline-block; padding: 0.5rem 1.25rem; background: var(--primary); color: white; border: none; border-radius: var(--radius); cursor: pointer; font-size: 0.875rem; font-weight: 500; transition: background 0.2s; }
+.btn:hover { background: var(--primary-hover); }
+.btn-sm { padding: 0.25rem 0.75rem; font-size: 0.8rem; }
+.btn-outline { background: transparent; color: var(--primary); border: 1px solid var(--primary); }
+.btn-outline:hover { background: var(--primary); color: white; }
+.btn-outline.active { background: var(--primary); color: white; }
+
+.event-header { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.5rem 0.75rem; margin-bottom: 0.625rem; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 0.5rem; }
+.event-info { font-size: 0.9rem; }
+.event-info strong { font-size: 1rem; }
+.event-info span { color: var(--text-muted); margin-left: 0.75rem; }
+
+.grid-selector { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.625rem 0.75rem; margin-bottom: 0.625rem; }
+.grid-selector h3 { font-size: 0.8rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 0.5rem; }
+.name-grid { display: flex; flex-wrap: wrap; gap: 0.375rem; }
+.name-grid button { padding: 0.3rem 0.65rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); cursor: pointer; font-size: 0.8rem; transition: all 0.15s; white-space: nowrap; }
+.name-grid button:hover { border-color: var(--primary); color: var(--primary); }
+.name-grid button.active { background: var(--primary); color: white; border-color: var(--primary); }
+.board-grid { display: flex; flex-wrap: nowrap; gap: 0.25rem; align-items: center; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+.board-grid button { min-width: 1.85rem; height: 1.85rem; padding: 0 0.25rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); cursor: pointer; font-size: 0.8rem; font-weight: 500; transition: background 0.15s, color 0.15s, border-color 0.15s; flex-shrink: 0; }
+.board-grid button:hover:not(.active) { border-color: var(--primary); color: var(--primary); }
+.board-grid button.active,
+.board-grid button.active:hover { background: var(--primary) !important; color: white !important; border-color: var(--primary) !important; }
+.nav-arrow { width: 1.85rem; height: 1.85rem; flex-shrink: 0; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); cursor: pointer; font-size: 0.9rem; display: flex; align-items: center; justify-content: center; transition: all 0.15s; padding: 0; }
+.nav-arrow:hover { border-color: var(--primary); color: var(--primary); }
+
+.summary { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1rem 1.25rem; margin-bottom: 1rem; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 0.75rem; }
+.stat { text-align: center; }
+.stat-value { font-size: 1.1rem; font-weight: 600; }
+.stat-label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+.results-table { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); overflow-x: auto; -webkit-overflow-scrolling: touch; }
+table { width: 100%; border-collapse: collapse; font-size: 0.8125rem; }
+th { background: var(--bg); padding: 0.5rem 0.625rem; text-align: left; font-weight: 600; font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); white-space: nowrap; position: sticky; top: 0; }
+td { padding: 0.4rem 0.625rem; border-top: 1px solid var(--border); white-space: nowrap; }
+tr:hover td { background: #f1f5f9; }
+.text-right { text-align: right; }
+
+.cause { display: inline-block; padding: 0.125rem 0.5rem; border-radius: 999px; font-size: 0.7rem; font-weight: 600; color: white; }
+.cause-Good { background: var(--good); } .cause-Lucky { background: var(--lucky); }
+.cause-Play { background: var(--play); } .cause-Defense { background: var(--defense); }
+.cause-Auction { background: var(--auction); } .cause-Unlucky { background: var(--unlucky); }
+
+.mp-bar { display: inline-block; width: 50px; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; vertical-align: middle; margin-left: 4px; }
+.mp-fill { display: block; height: 100%; border-radius: 3px; transition: width 0.3s; }
+
+.contract-made { color: var(--good); font-weight: 500; }
+.contract-down { color: var(--play); font-weight: 500; }
+.mp-good { color: var(--good); font-weight: 500; }
+.mp-bad { color: var(--play); font-weight: 500; }
+.suit-red { color: #dc2626; } .suit-black { color: #212529; }
+.clickable { color: var(--primary); text-decoration: none; font-weight: 500; cursor: pointer; }
+.clickable:hover { text-decoration: underline; }
+td a { color: var(--primary); text-decoration: none; font-weight: 500; cursor: pointer; }
+td a:hover { text-decoration: underline; }
+.declarer-name { font-weight: 700; }
+.row-highlight td { background: #dbeafe !important; border-top-color: #93c5fd !important; }
+
+/* Player-view role highlights: light green when declaring, light grey when dummy */
+.row-declarer td { background: #f0fdf4; }
+.row-dummy td { background: #f3f4f6; }
+.stat-declarer { background: #f0fdf4; border-radius: 6px; padding: 0 0.25rem; }
+.stat-dummy { background: #f3f4f6; border-radius: 6px; padding: 0 0.25rem; }
+
+/* Compact board table columns */
+th { font-size: 0.7rem; padding: 0.375rem 0.4rem; }
+td { font-size: 0.8rem; padding: 0.375rem 0.4rem; }
+.col-contract-score { display: flex; justify-content: space-between; gap: 0.5rem; min-width: 6rem; }
+.col-contract-score .score { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+tr.clickable-row { cursor: pointer; }
+tr.clickable-row:hover td { background: #e0e7ff; }
+
+/* Board viewer + side panel layout */
+.viewer-row { display: flex; gap: 1rem; margin-bottom: 1rem; }
+.viewer-col { flex: 1; min-width: 0; }
+.side-panel { width: 280px; flex-shrink: 0; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem; font-size: 0.8rem; overflow-y: auto; max-height: 520px; }
+.side-panel h4 { font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 0.5rem; }
+.side-panel table { font-size: 0.75rem; }
+.side-panel th, .side-panel td { padding: 3px 5px; border: 1px solid var(--border); text-align: center; }
+.side-panel th { background: var(--bg); }
+.dd-highlight-green { background: #d4edda !important; color: #155724 !important; font-weight: 700; }
+.dd-highlight-red { background: #f8d7da !important; color: #721c24 !important; font-weight: 700; }
+.bba-loading { color: var(--text-muted); font-size: 0.75rem; text-align: center; padding: 0.5rem; }
+
+.hand-viewer-frame { width: 100%; height: 500px; border: 1px solid var(--border); border-radius: var(--radius); }
+
+/* Footer (matches bridge-classroom.com) */
+.footer { text-align: center; margin-top: 40px; padding-top: 24px; border-top: 0.5px solid var(--border); max-width: 1100px; margin-left: auto; margin-right: auto; padding-bottom: 24px; }
+.footer-links { display: flex; align-items: center; justify-content: center; gap: 18px; margin-bottom: 12px; flex-wrap: wrap; }
+.footer-link { font-size: 14px; color: var(--text-muted); cursor: pointer; display: flex; align-items: center; gap: 5px; text-decoration: none; }
+.footer-link:hover { color: var(--text); }
+.footer-copy { font-size: 13px; color: var(--text-muted); }
+
+.loading { text-align: center; padding: 3rem; color: var(--text-muted); }
+.hidden { display: none; }
+#error { color: var(--play); padding: 0.75rem; text-align: center; }
+.pbn-notice { background: #fef3c7; border: 1px solid #f59e0b; border-radius: var(--radius); padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
+
+/* MP award color badges */
+.mp-award { display: inline-block; padding: 0.125rem 0.4rem; border-radius: 999px; font-size: 0.7rem; font-weight: 600; color: white; white-space: nowrap; }
+.mp-award-black { background: #374151; }
+.mp-award-silver { background: #6b7280; }
+.mp-award-red { background: #dc2626; }
+.mp-award-gold { background: #b45309; }
+.mp-award-platinum { background: #7c3aed; }
+
+/* Batch progress */
+.batch-progress { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 2.5rem 1rem; text-align: center; margin-bottom: 0.625rem; }
+.batch-progress p { color: var(--text-muted); font-size: 0.9rem; margin-top: 0.5rem; }
+.batch-bar-wrap { width: 100%; max-width: 380px; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; margin: 0.75rem auto 0; }
+.batch-bar { height: 100%; background: var(--primary); border-radius: 3px; transition: width 0.3s; }
+
+/* Track modal */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 100; }
+.modal-box { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 101; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; max-width: 500px; width: 92%; }
+.modal-box h3 { font-size: 1rem; margin-bottom: 0.25rem; }
+.modal-desc { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+.modal-search { width: 100%; padding: 0.3rem 0.6rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; margin-bottom: 0.5rem; }
+.modal-player-list { max-height: 260px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.6rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.modal-player-list label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; cursor: pointer; padding: 0.15rem 0; }
+.modal-player-list label:hover { color: var(--primary); }
+.modal-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; align-items: center; }
+.modal-sel-btns { display: flex; gap: 0.375rem; margin-left: auto; }
+
+/* History view */
+.history-controls { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.875rem; }
+.history-controls label { font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
+.history-controls select { font-size: 0.85rem; padding: 0.25rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.history-sparkline { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 1rem; margin-bottom: 0.875rem; }
+.history-sparkline h4 { font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 0.5rem; }
+.history-sparkline svg { display: block; width: 100%; max-width: 480px; }
+.history-empty { color: var(--text-muted); font-size: 0.875rem; padding: 2rem; text-align: center; }
+.history-player-header { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; }
+.cause-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; margin-right: 2px; }
+
+@media (max-width: 640px) {
+  .container { padding: 0.5rem; }
+  .summary { grid-template-columns: repeat(2, 1fr); }
+  table { font-size: 0.75rem; }
+  td, th { padding: 0.3rem 0.4rem; }
+  .hand-viewer-frame { height: 380px; }
+  .event-header { flex-direction: column; }
+  .viewer-row { flex-direction: column; }
+  .side-panel { width: 100%; max-height: none; }
+}
+</style>
+</head>
+<body>
+<header><div class="container"><h1>Club Game Analysis <span>by Bridge Classroom</span></h1></div></header>
+
+<div class="container">
+  <!-- Empty state for the /analyze route when no extension data is present -->
+  <div id="analyze-empty" class="upload-area hidden">
+    <p><strong>No game data was passed to this page.</strong></p>
+    <p style="font-size:0.85rem;color:var(--text-muted);margin-top:0.5rem;">
+      Open a tournament results page on ACBL Live and click "Analyze with Bridge Classroom" in the
+      <em>bridge-data-extension</em> browser extension. To analyze a club game from BWS+PBN files instead,
+      <a id="analyze-empty-link" href="/" style="color:var(--primary);">go to the file-upload page</a>.
+    </p>
+  </div>
+
+  <!-- Error state for the /analyze route when the handoff data is malformed -->
+  <div id="analyze-error" class="upload-area hidden" style="border-color:#c33;background:#fdf6f6;">
+    <p><strong>Couldn't read the game data passed to this page.</strong></p>
+    <p id="analyze-error-detail" style="font-size:0.85rem;color:var(--text-muted);margin-top:0.5rem;"></p>
+    <p style="font-size:0.85rem;color:var(--text-muted);margin-top:0.5rem;">
+      <a id="analyze-error-link" href="/" style="color:var(--primary);">Go to the file-upload page</a>
+      to analyze a club game instead.
+    </p>
+  </div>
+
+  <!-- Upload (only shown on the / route) -->
+  <div id="upload-area" class="upload-area">
+    <p>Upload your game files from ACBLscore/ACBLlive<br>
+    <small>Select both the .BWS and .PBN files together (hold Cmd/Ctrl to multi-select)</small></p>
+    <label class="btn" for="file-input">Choose Files</label>
+    <input type="file" id="file-input" multiple accept=".bws,.pbn,.BWS,.PBN">
+    <div id="file-names" style="margin-top:0.5rem;color:var(--text-muted);font-size:0.85rem;"></div>
+  </div>
+
+  <details id="download-help" style="margin-bottom:1rem;">
+    <summary style="cursor:pointer;color:var(--primary);font-size:0.85rem;font-weight:500;">Where do I find these files?</summary>
+    <div style="background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:1rem;margin-top:0.5rem;">
+      <p style="font-size:0.85rem;margin-bottom:0.75rem;">On your game's page at <strong>ACBL Live for Clubs</strong>, download both files using the links in the top-right <strong>Reference Data</strong> section:</p>
+      <img src="/static/acbl-download-help.png" alt="ACBL Live download links" style="max-width:100%;border:1px solid var(--border);border-radius:var(--radius);">
+      <p style="font-size:0.8rem;color:var(--text-muted);margin-top:0.5rem;">Then click <strong>Choose Files</strong> above and select both files from your Downloads folder.</p>
+    </div>
+  </details>
+
+  <div id="pbn-notice" class="pbn-notice hidden">
+    <strong>Tip:</strong> Upload the matching .PBN file for hand viewer and double-dummy analysis.
+    <label class="btn btn-sm" for="pbn-add-input" style="margin-left:0.5rem;">Add PBN File</label>
+    <input type="file" id="pbn-add-input" accept=".pbn,.PBN" style="display:none;">
+  </div>
+
+  <div id="names-notice" class="pbn-notice hidden">
+    <div><strong>Some player names are missing</strong> from this BWS file
+    (the club computer's ACBL name database wasn't loaded when the file was exported).</div>
+    <div id="names-missing-count" style="margin-top:0.375rem;font-size:0.8rem;color:var(--text-muted);"></div>
+    <div style="margin-top:0.5rem;">
+      <button class="btn btn-sm" id="paste-names-toggle">Paste pair names from ACBL Live</button>
+    </div>
+    <div id="paste-names-area" class="hidden" style="margin-top:0.75rem;">
+      <div style="font-size:0.8rem;margin-bottom:0.375rem;">
+        Go to your game on ACBL Live, select the <strong>Recaps</strong> table
+        showing pair numbers and names, and paste it below:
+      </div>
+      <textarea id="paste-names-text" rows="8"
+        style="width:100%;font-family:ui-monospace,monospace;font-size:0.75rem;padding:0.5rem;border:1px solid var(--border);border-radius:var(--radius);"
+        placeholder="1  Smith John - Jones Mary  A  ...&#10;2  Brown Bob - Davis Sue  B  ..."></textarea>
+      <div style="margin-top:0.5rem;">
+        <button class="btn btn-sm" id="paste-names-apply">Apply Names</button>
+        <span id="paste-names-result" style="margin-left:0.5rem;font-size:0.8rem;color:var(--text-muted);"></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Event header -->
+  <div id="event-header" class="event-header hidden">
+    <div class="event-info">
+      <strong id="event-name"></strong><span id="event-date"></span>
+      <select id="session-selector" class="hidden" style="margin-left:0.5rem;font-size:0.85rem;padding:0.25rem 0.5rem;"></select>
+    </div>
+    <div style="display:flex;gap:0.375rem;align-items:center;">
+      <button class="btn btn-sm btn-outline active" id="tab-players" onclick="switchView('players')">Players</button>
+      <button class="btn btn-sm btn-outline" id="tab-boards" onclick="switchView('boards')">Boards</button>
+      <button class="btn btn-sm btn-outline" id="tab-history" onclick="switchView('history')">History</button>
+      <button class="btn btn-sm" id="save-json-btn" style="margin-left:0.5rem;" title="Download the normalized JSON for this session">Save JSON</button>
+      <button class="btn btn-sm" id="new-file-btn" style="margin-left:0.5rem;">New File</button>
+    </div>
+  </div>
+
+  <!-- Player grid -->
+  <div id="player-grid" class="grid-selector hidden">
+    <h3>Select a player</h3>
+    <div class="name-grid" id="player-names"></div>
+  </div>
+
+  <!-- Board grid (with nav arrows) -->
+  <div id="board-grid" class="grid-selector hidden">
+    <h3>Select a board</h3>
+    <div class="board-grid" id="board-numbers"></div>
+  </div>
+
+  <div id="error" class="hidden"></div>
+  <div id="loading" class="loading hidden">Analyzing...</div>
+
+  <!-- Player results (no hand viewer here) -->
+  <div id="player-results" class="hidden">
+    <div id="player-summary" class="summary"></div>
+    <div id="player-summary2" class="summary"></div>
+    <div class="results-table">
+      <table><thead id="player-thead"></thead><tbody id="player-tbody"></tbody></table>
+    </div>
+  </div>
+
+  <!-- Board results (hand viewer + side panel + table) -->
+  <div id="board-results" class="hidden">
+    <div id="viewer-row" class="viewer-row hidden">
+      <div class="viewer-col">
+        <iframe id="board-viewer" class="hand-viewer-frame" sandbox="allow-scripts allow-same-origin" allowfullscreen></iframe>
+      </div>
+      <div id="side-panel" class="side-panel">
+        <div id="dd-section"><div class="bba-loading">Loading DD analysis...</div></div>
+        <div id="par-section" class="hidden" style="margin-top:0.75rem;border-top:1px solid var(--border);padding-top:0.75rem;"></div>
+        <div id="bba-section" style="margin-top:0.75rem;border-top:1px solid var(--border);padding-top:0.75rem;"><div class="bba-loading">Loading BBA auction...</div></div>
+      </div>
+    </div>
+    <div id="board-summary" class="summary"></div>
+    <div class="results-table">
+      <table><thead id="board-thead"></thead><tbody id="board-tbody"></tbody></table>
+    </div>
+  </div>
+
+  <!-- Batch import progress -->
+  <div id="batch-progress" class="batch-progress hidden">
+    <strong id="batch-status-title">Importing history…</strong>
+    <p id="batch-status-detail"></p>
+    <div class="batch-bar-wrap"><div class="batch-bar" id="batch-bar" style="width:0%"></div></div>
+  </div>
+
+  <!-- Track-player selection modal (shown when no tracked players exist at batch start) -->
+  <div id="track-modal" class="hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <h3>Who should we track?</h3>
+      <p class="modal-desc">No tracked players found. Select the players you'd like to save history for, then start the batch. You only need to do this once — they'll be tracked automatically going forward.</p>
+      <input class="modal-search" id="track-modal-search" type="text" placeholder="Filter names…" oninput="filterTrackModal(this.value)">
+      <div class="modal-player-list" id="track-modal-players"></div>
+      <div class="modal-actions">
+        <button class="btn" id="track-modal-start">Start Batch</button>
+        <button class="btn btn-outline" id="track-modal-cancel">Cancel</button>
+        <div class="modal-sel-btns">
+          <button class="btn btn-sm btn-outline" onclick="setAllTrackModal(true)">All</button>
+          <button class="btn btn-sm btn-outline" onclick="setAllTrackModal(false)">None</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- History view -->
+  <div id="history-view" class="hidden">
+    <div class="history-controls">
+      <label for="history-player-select">Player:</label>
+      <select id="history-player-select" onchange="renderHistoryPlayer(this.value)"></select>
+      <button class="btn btn-sm btn-outline" id="history-clear-btn" onclick="clearHistory()">Clear History</button>
+    </div>
+    <div id="history-content"></div>
+  </div>
+
+  <div class="footer">
+    <div class="footer-links">
+      <a class="footer-link" href="https://github.com/Rick-Wilson/Bridge-Classroom">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23A11.509 11.509 0 0 1 12 5.803c1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+        GitHub
+      </a>
+      <a class="footer-link" href="https://discord.gg/e7MZ3Z5A">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/></svg>
+        Discord
+      </a>
+      <a class="footer-link" href="mailto:bridge-craftwork@gmail.com">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
+        Email support
+      </a>
+      <a class="footer-link" href="https://patreon.com/BridgeCraftwork" target="_blank">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M14.82 2.41C18.78 2.41 22 5.65 22 9.62c0 3.96-3.22 7.18-7.18 7.18-3.96 0-7.17-3.22-7.17-7.18 0-3.97 3.21-7.21 7.17-7.21M2 21.6h3.5V2.41H2V21.6z"/></svg>
+        Patreon
+      </a>
+      <a class="footer-link" href="https://bridge-classroom.com/about">About</a>
+    </div>
+    <div class="footer-copy">Bridge Classroom &#183; free &amp; open source &#183; bridge-classroom.com</div>
+  </div>
+</div>
+
+<script>
+const BASE = (() => {
+  const h = window.location.hostname;
+  if (h === 'localhost' || h === '127.0.0.1') return '';
+  return 'https://api.bridge-classroom.com';
+})();
+let sessionId = null;
+let cachedPlayers = [];
+let cachedBoards = [];
+let currentBoard = null;
+let currentPlayerName = null; // Track for row highlighting in board view
+let currentSessionIdx = 0;     // 0 = first session; only matters when many
+let cachedSessions = [];       // [{ session_idx, label, board_count, result_count }]
+
+// ==================== JS Analysis Engine — Phase 0 (parity scaffold) ====================
+//
+// Goal: progressively port the Rust analysis crate (analysis/src/{data,metrics})
+// to JS so the SPA can run analysis client-side. Plan is to land it in slices:
+// each slice ports one piece (matchpoint calc, field contract, board context,
+// cause analysis, ...) and adds a parity check that cross-validates against
+// the server's response on the same input.
+//
+// `cachedNormalized` holds the full normalized JSON document for the current
+// upload, fetched once on upload via /api/normalized. The JS analyzer reads
+// from it directly (same shape the Rust schema deserializes from).
+let cachedNormalized = null;
+
+// Bridge-domain string constants. Keep these as plain strings (matching the
+// schema's wire shape) rather than wrapping them in objects — saves us a
+// translation layer everywhere a Direction or Strain shows up in the JSON.
+const DIRECTIONS = ['N', 'E', 'S', 'W'];
+const STRAINS = ['C', 'D', 'H', 'S', 'NT'];
+const SUITS = ['S', 'H', 'D', 'C']; // hand display order (high → low)
+
+/** Normalize a player name for identity comparison. Mirrors the Rust
+ *  identity::normalize_name — used as the dedup key in PlayerRegistry. */
+function normalizeName(name) {
+  return (name || '').trim().toLowerCase();
+}
+
+/** Identity key used to deduplicate players across the document. ACBL number
+ *  trumps name when present (matches PlayerId::with_acbl_number). */
+function playerKey(player) {
+  if (player.acbl_id) return `acbl:${player.acbl_id}`;
+  return `name:${normalizeName(player.name)}`;
+}
+
+/** Display name: lowercase, then capitalize the first letter of each
+ *  whitespace-separated word. Mirrors PlayerId::display_name() — used so
+ *  "LaFrancesca" round-trips to "Lafrancesca" the same way the server
+ *  normalizes player identity. */
+function displayName(name) {
+  return (name || '').trim().toLowerCase().split(/\s+/).map(w =>
+    w ? w[0].toUpperCase() + w.slice(1) : ''
+  ).join(' ');
+}
+
+/** Fetch the full normalized JSON for the current session. Cached after the
+ *  first call so repeated player/board navigations are free. */
+async function loadNormalized() {
+  if (cachedNormalized) return cachedNormalized;
+  // Prefer sessionStorage (set inline from upload response — no second fetch needed).
+  try {
+    const stored = sessionStorage.getItem('bc-game');
+    if (stored) {
+      cachedNormalized = JSON.parse(stored);
+      try { autoSaveTrackedPlayers(cachedNormalized); } catch (e) {}
+      return cachedNormalized;
+    }
+  } catch (e) {}
+  // Batch fallback: session_id was stored server-side, fetch it.
+  if (!sessionId) throw new Error('no active session');
+  cachedNormalized = await getJSON(`${BASE}/api/normalized?session=${sessionId}`);
+  try { autoSaveTrackedPlayers(cachedNormalized); } catch (e) {}
+  return cachedNormalized;
+}
+
+// ---- Matchpoint calculation ----
+//
+// Direct port of analysis::metrics::player::calculate_matchpoint_pct. For a
+// given result on a board, count what fraction of the OTHER results on that
+// same board it beats (1.0 each) or ties (0.5 each), times 100. Equivalent
+// to ACBL-style matchpoint scoring. Player direction (NS or EW) flips the
+// sign of the comparison so EW gets the opposite of NS's score.
+function calculateMatchpointPct(result, allResults, playerDir /* 'NS' | 'EW' */) {
+  if (allResults.length <= 1) return 50.0;
+  const sign = playerDir === 'NS' ? 1 : -1;
+  const playerScore = sign * (result.score ?? 0);
+  let wins = 0, comparisons = 0;
+  for (const other of allResults) {
+    if (other === result) continue;
+    const otherScore = sign * (other.score ?? 0);
+    comparisons++;
+    if (playerScore > otherScore) wins += 1;
+    else if (playerScore === otherScore) wins += 0.5;
+  }
+  return comparisons > 0 ? (wins / comparisons) * 100.0 : 50.0;
+}
+
+/** Iterate every (board, result) pair in a session for convenient walking. */
+function* iterSessionResults(session) {
+  for (const board of session.boards) {
+    for (const result of board.results) {
+      yield { board, result };
+    }
+  }
+}
+
+/** Locate the session inside a NormalizedGame by flattened session_idx. */
+function pickSession(game, sessionIdx) {
+  let i = 0;
+  for (const t of game.tournaments) {
+    for (const e of t.events) {
+      for (const s of e.sessions) {
+        if (i === sessionIdx) return s;
+        i++;
+      }
+    }
+  }
+  return null;
+}
+
+/** Distinct player names in a session, sorted. Used to populate the player
+ *  grid; replaces the old server-side /api/players endpoint. */
+function derivePlayers(game, sessionIdx) {
+  const session = pickSession(game, sessionIdx);
+  if (!session) return [];
+  const seen = new Set();
+  const names = [];
+  for (const board of session.boards) {
+    for (const result of board.results) {
+      for (const pair of [result.ns_pair, result.ew_pair]) {
+        for (const p of pair?.players ?? []) {
+          const name = displayName(p.name);
+          const key = playerKey(p);
+          if (name && !seen.has(key)) { seen.add(key); names.push(name); }
+        }
+      }
+    }
+  }
+  names.sort((a, b) => a.localeCompare(b));
+  return names;
+}
+
+/** Distinct board numbers in a session, sorted. Replaces the old server-side
+ *  /api/boards endpoint. */
+function deriveBoards(game, sessionIdx) {
+  const session = pickSession(game, sessionIdx);
+  if (!session) return [];
+  return session.boards
+    .map(b => b.number)
+    .filter((n, i, arr) => arr.indexOf(n) === i)
+    .sort((a, b) => a - b);
+}
+
+/** Find the partnership direction this player sat in for this result.
+ *  Returns 'NS', 'EW', or null if not in either pair. */
+function playerDirectionInResult(result, playerName) {
+  const norm = normalizeName(playerName);
+  if (result.ns_pair?.players?.some(p => normalizeName(p.name) === norm)) return 'NS';
+  if (result.ew_pair?.players?.some(p => normalizeName(p.name) === norm)) return 'EW';
+  return null;
+}
+
+// ---- Contract / result helpers ----
+//
+// Schema's `contract` is the canonical string "{level}{strain}{double?}" —
+// "3NT", "4SX", "6HXX", or "PASS"/null for passed-out / no-result rows.
+
+/** Extract the strain ("C"/"D"/"H"/"S"/"NT") from a canonical contract.
+ *  Returns null for PASS / null. Mirrors strain_key() in player.rs. */
+function extractStrain(contract) {
+  if (!contract || contract === 'PASS') return null;
+  // contract[0] is level (1-7); contract[1] starts the strain.
+  // 'N' implies "NT"; everything else is a single suit letter.
+  return contract[1] === 'N' ? 'NT' : (contract[1] || null);
+}
+
+/** Tricks the declarer took on this result, or null if the row has no
+ *  result (PASS, sit-out, etc.). Matches BoardResult::tricks_made(): the
+ *  schema already carries absolute tricks, so this is just a passthrough
+ *  with a contract-presence guard. */
+function tricksMade(result) {
+  if (result.contract == null || result.contract === 'PASS') return null;
+  if (result.tricks == null) return null;
+  return result.tricks;
+}
+
+// ---- Field-level board context ----
+//
+// Pre-compute per-board state needed to evaluate any one result on the same
+// board. Mirrors the shape of analysis::metrics::player::BoardContext but
+// only contains pieces that have been ported so far.
+
+/** Build a `strain → { avg, count }` map of tricks taken across all results
+ *  on a board, grouped by the contract's strain. Used as the denominator in
+ *  declarer-vs-field comparisons. */
+function fieldTrickAverages(allResults) {
+  const grouped = new Map(); // strain -> array of tricks
+  for (const r of allResults) {
+    const strain = extractStrain(r.contract);
+    const tricks = tricksMade(r);
+    if (strain == null || tricks == null) continue;
+    if (!grouped.has(strain)) grouped.set(strain, []);
+    grouped.get(strain).push(tricks);
+  }
+  const out = new Map();
+  for (const [strain, arr] of grouped) {
+    const sum = arr.reduce((a, b) => a + b, 0);
+    out.set(strain, { avg: sum / arr.length, count: arr.length });
+  }
+  return out;
+}
+
+/** Trick difference between this declarer's actual tricks and the strain's
+ *  field average. Returns null when fewer than 2 tables played the strain
+ *  (no meaningful average), matching the Rust check `if count > 1`. */
+function declarerVsField(result, fieldAverages) {
+  const strain = extractStrain(result.contract);
+  const tricks = tricksMade(result);
+  if (strain == null || tricks == null) return null;
+  const stats = fieldAverages.get(strain);
+  if (!stats || stats.count <= 1) return null;
+  return tricks - stats.avg;
+}
+
+// ---- Field contract ----
+//
+// "Field contract" = the contract played by the most tables on a board,
+// keyed by canonical full string (level + strain + double). Mirrors the
+// `field_contract` block in compute_board_context: count occurrences,
+// pick the max. Ties are broken arbitrarily (Rust's max_by_key on a
+// HashMap iter is non-deterministic), so the parity check has to
+// tolerate alternative choices that share the same count.
+
+/** Tally counts of canonical contract strings for all results on a board. */
+function fieldContractCounts(allResults) {
+  const counts = new Map();
+  for (const r of allResults) {
+    if (!r.contract || r.contract === 'PASS') continue;
+    counts.set(r.contract, (counts.get(r.contract) || 0) + 1);
+  }
+  return counts;
+}
+
+/** Return the canonical string of the most-common contract on the board, or
+ *  null if there are no contracts. On ties, returns one of the tied entries. */
+function fieldContract(allResults) {
+  const counts = fieldContractCounts(allResults);
+  if (counts.size === 0) return null;
+  let best = null, bestCount = 0;
+  for (const [contract, count] of counts) {
+    if (count > bestCount) { best = contract; bestCount = count; }
+  }
+  return best;
+}
+
+/** True when the actual contract matches the field on level + strain
+ *  (ignoring doubled status). Mirrors the matched_field check in
+ *  analyze_direction(). Returns false when either side is null. */
+function matchedFieldContract(actualContract, fieldContractStr) {
+  if (!actualContract || actualContract === 'PASS' || !fieldContractStr) return false;
+  const aLvl = actualContract[0], aStr = extractStrain(actualContract);
+  const fLvl = fieldContractStr[0], fStr = extractStrain(fieldContractStr);
+  return aLvl === fLvl && aStr === fStr;
+}
+
+/** True when the actual contract shares the field contract's strain
+ *  (ignoring level + doubled). Same null-handling as matchedFieldContract. */
+function sameStrainAsField(actualContract, fieldContractStr) {
+  if (!actualContract || actualContract === 'PASS' || !fieldContractStr) return false;
+  return extractStrain(actualContract) === extractStrain(fieldContractStr);
+}
+
+/** Comparison helper that treats any field contract sharing the max count
+ *  as parity-equivalent. Server's HashMap iteration order is randomized,
+ *  so on ties we'd get spurious mismatches without this. */
+function fieldContractEquivalent(serverField, jsField, counts) {
+  if (serverField === jsField) return true;
+  if (!serverField || !jsField) return false;
+  return counts.get(serverField) === counts.get(jsField);
+}
+
+// ---- Board-level structural context ----
+//
+// Mirrors the rest of compute_board_context: who declared (per-table and
+// "typically"), competitive structure, board-type classification, and par
+// matching. These are the inputs the cause-analysis decision tree reads.
+
+/** "NS" or "EW" — which partnership this declarer was on. Mirrors
+ *  BoardResult::declaring_direction(). */
+function declaringDirection(result) {
+  switch (result.declarer) {
+    case 'N': case 'S': return 'NS';
+    case 'E': case 'W': return 'EW';
+    default: return null;
+  }
+}
+
+/** Which side typically declares this board, the field-declaring direction,
+ *  and the per-side typically-declares flags. Mirrors the block in
+ *  compute_board_context that filters non-passout results and computes
+ *  ns_typically_declares / ew_typically_declares. */
+function declaringFlags(allResults) {
+  const nonPassout = allResults.filter(r => r.contract && r.contract !== 'PASS');
+  const total = nonPassout.length;
+  const ns = nonPassout.filter(r => declaringDirection(r) === 'NS').length;
+  const ew = total - ns;
+  const nsTypically = total > 0 && ns * 2 > total;
+  const ewTypically = total > 0 && ew * 2 > total;
+  let fieldDir = null;
+  if (nsTypically) fieldDir = 'NS';
+  else if (ewTypically) fieldDir = 'EW';
+  return { nsTypicallyDeclares: nsTypically, ewTypicallyDeclares: ewTypically,
+           fieldDeclaringDirection: fieldDir };
+}
+
+/** Per-side competitive info: when both sides have a primary strain and the
+ *  strains differ, the board is competitive. Mirrors compute_competitive_info.
+ *  Returns null when one side lacks a primary strain (≥ 2 tables) or both
+ *  primaries are the same strain. */
+function computeCompetitiveInfo(allResults, playerDir /* 'NS' | 'EW' */) {
+  const nsStrains = new Map(); // strain → { count, maxLevel }
+  const ewStrains = new Map();
+  for (const r of allResults) {
+    if (!r.contract || r.contract === 'PASS') continue;
+    const strain = extractStrain(r.contract);
+    const level = parseInt(r.contract[0], 10);
+    const dir = declaringDirection(r);
+    const map = dir === 'NS' ? nsStrains : ewStrains;
+    const cur = map.get(strain) || { count: 0, maxLevel: 0 };
+    cur.count++;
+    cur.maxLevel = Math.max(cur.maxLevel, level);
+    map.set(strain, cur);
+  }
+  const primary = (m) => {
+    let best = null, bestCount = 0;
+    for (const [strain, { count, maxLevel }] of m) {
+      if (count >= 2 && count > bestCount) { best = { strain, maxLevel }; bestCount = count; }
+    }
+    return best;
+  };
+  const nsP = primary(nsStrains);
+  const ewP = primary(ewStrains);
+  if (!nsP || !ewP || nsP.strain === ewP.strain) return null;
+  if (playerDir === 'NS') {
+    return { playerStrain: nsP.strain, playerMaxLevel: nsP.maxLevel,
+             oppStrain: ewP.strain, oppMaxLevel: ewP.maxLevel };
+  }
+  return { playerStrain: ewP.strain, playerMaxLevel: ewP.maxLevel,
+           oppStrain: nsP.strain, oppMaxLevel: nsP.maxLevel };
+}
+
+/** True if the contract is at game level or higher for its strain.
+ *  Mirrors is_game_level: 5C, 5D, 4H, 4S, 3NT and above. */
+function isGameLevel(contract) {
+  if (!contract || contract === 'PASS') return false;
+  const level = parseInt(contract[0], 10);
+  const s = extractStrain(contract);
+  if (s === 'C' || s === 'D') return level >= 5;
+  if (s === 'H' || s === 'S') return level >= 4;
+  if (s === 'NT') return level >= 3;
+  return false;
+}
+
+/** Classify the board's primary structural feature. Mirrors classify_board:
+ *  Competitive > Slam vs Game > Game vs Partscore > Strain Choice > Flat.
+ *  Each level requires ≥ 2 tables on each side of a split. Returns the same
+ *  display string as the Rust BoardType::Display impl. */
+function classifyBoard(allResults, competitiveNs) {
+  if (competitiveNs) {
+    return `Competitive (${competitiveNs.playerStrain} vs ${competitiveNs.oppStrain})`;
+  }
+  // Per-strain (slam, game, partscore) tallies.
+  const byStrain = new Map();
+  for (const r of allResults) {
+    if (!r.contract || r.contract === 'PASS') continue;
+    const s = extractStrain(r.contract);
+    const level = parseInt(r.contract[0], 10);
+    const cur = byStrain.get(s) || { slam: 0, game: 0, ps: 0 };
+    if (level >= 6) cur.slam++;
+    else if (isGameLevel(r.contract)) cur.game++;
+    else cur.ps++;
+    byStrain.set(s, cur);
+  }
+  // 2. Slam vs Game
+  let svgPick = null;
+  for (const [strain, c] of byStrain) {
+    if (c.slam >= 2 && (c.game + c.ps) >= 2) {
+      if (!svgPick || c.slam > svgPick.slam) svgPick = { strain, slam: c.slam };
+    }
+  }
+  if (svgPick) return `Slam vs Game (${svgPick.strain})`;
+  // 3. Game vs Partscore
+  let gvpPick = null;
+  for (const [strain, c] of byStrain) {
+    if (c.game >= 2 && c.ps >= 2) {
+      if (!gvpPick || c.game > gvpPick.game) gvpPick = { strain, game: c.game };
+    }
+  }
+  if (gvpPick) return `Game vs Partscore (${gvpPick.strain})`;
+  // 4. Strain Choice (same-side, multiple strains each with ≥ 2 tables)
+  for (const sideMap of [groupBySideStrain(allResults, 'NS'), groupBySideStrain(allResults, 'EW')]) {
+    const qualifying = [...sideMap.entries()].filter(([_, c]) => c >= 2);
+    if (qualifying.length >= 2) {
+      qualifying.sort((a, b) => b[1] - a[1]);
+      return `Strain choice (${qualifying[0][0]} vs ${qualifying[1][0]})`;
+    }
+  }
+  return 'Flat';
+}
+
+/** Returns true when two board-type strings are equivalent under the
+ *  same-kind classification, even if they made different tie-break choices.
+ *  Rust's max_by_key on a HashMap is non-deterministic on ties, so the
+ *  parity check has to tolerate a strain-pick disagreement when both are
+ *  valid choices from a tied set.
+ *
+ *  Strain choice: ignore order — "(S vs H)" and "(H vs S)" are equivalent.
+ *  Competitive: equivalent if either disagreeing strain tied for the
+ *    primary on its side (≥ 2 occurrences and the max count there).
+ *  Slam vs Game / Game vs Partscore: equivalent if both strains tied for
+ *    the max in their category.
+ */
+function boardTypeEquivalent(serverBT, jsBT, allResults) {
+  if (serverBT === jsBT) return true;
+  if (!serverBT || !jsBT) return false;
+  // Same kind (prefix before the parenthesized strain pair) is required.
+  const kindOf = s => s.replace(/\s*\(.*\)$/, '').trim();
+  if (kindOf(serverBT) !== kindOf(jsBT)) return false;
+  const argsOf = s => {
+    const m = s.match(/\(([^)]*)\)/);
+    return m ? m[1].split(/\s+vs\s+/).map(x => x.trim()) : [];
+  };
+  const srvArgs = argsOf(serverBT);
+  const jsArgs = argsOf(jsBT);
+  if (kindOf(serverBT) === 'Strain choice') {
+    if (srvArgs.length !== 2 || jsArgs.length !== 2) return false;
+    // Same pair (any order): trivially equivalent.
+    if (srvArgs[0] === jsArgs[0] && srvArgs[1] === jsArgs[1]) return true;
+    if (srvArgs[0] === jsArgs[1] && srvArgs[1] === jsArgs[0]) return true;
+    // Different pair members: equivalent if the position-0 counts and
+    // position-1 counts both tie on some side. The Rust algorithm picks
+    // the top-2 qualifying (count >= 2) strains via a stable sort over
+    // HashMap iteration order, so any pick where positional counts match
+    // server's pick is valid (e.g., S=5, H=3, NT=3 admits both
+    // "(S vs H)" and "(S vs NT)").
+    for (const side of ['NS', 'EW']) {
+      const counts = groupBySideStrain(allResults, side);
+      const get = s => counts.get(s) || 0;
+      const all = [...srvArgs, ...jsArgs];
+      if (!all.every(s => get(s) >= 2)) continue;
+      if (get(srvArgs[0]) === get(jsArgs[0]) && get(srvArgs[1]) === get(jsArgs[1])) return true;
+      if (get(srvArgs[0]) === get(jsArgs[1]) && get(srvArgs[1]) === get(jsArgs[0])) return true;
+    }
+    return false;
+  }
+  if (kindOf(serverBT) === 'Competitive') {
+    // The classifier picks each side's primary strain via stable sort over
+    // randomized HashMap iteration, so ties on EITHER side can produce a
+    // valid-but-different choice. Equivalent if positional counts tie:
+    // count(NS strain) on NS side matches between server's pick and JS's
+    // pick, and count(EW strain) on EW side does the same.
+    const sideCounts = (side) => {
+      const m = new Map();
+      for (const r of allResults) {
+        if (!r.contract || r.contract === 'PASS') continue;
+        if (declaringDirection(r) !== side) continue;
+        const s = extractStrain(r.contract);
+        m.set(s, (m.get(s) || 0) + 1);
+      }
+      return m;
+    };
+    const nsCounts = sideCounts('NS');
+    const ewCounts = sideCounts('EW');
+    const ns = (s) => nsCounts.get(s) || 0;
+    const ew = (s) => ewCounts.get(s) || 0;
+    // Both choices must be qualifying (count >= 2) on their respective sides.
+    if (ns(srvArgs[0]) < 2 || ns(jsArgs[0]) < 2) return false;
+    if (ew(srvArgs[1]) < 2 || ew(jsArgs[1]) < 2) return false;
+    return ns(srvArgs[0]) === ns(jsArgs[0]) && ew(srvArgs[1]) === ew(jsArgs[1]);
+  }
+  if (kindOf(serverBT) === 'Slam vs Game' || kindOf(serverBT) === 'Game vs Partscore') {
+    // Both single-strain classifications — counts must tie in the relevant
+    // bucket for the disagreement to be a tie-break, not a real diff.
+    const slot = kindOf(serverBT) === 'Slam vs Game' ? 'slam' : 'game';
+    const tally = new Map();
+    for (const r of allResults) {
+      if (!r.contract || r.contract === 'PASS') continue;
+      const s = extractStrain(r.contract);
+      const lvl = parseInt(r.contract[0], 10);
+      const cur = tally.get(s) || { slam: 0, game: 0, ps: 0 };
+      if (lvl >= 6) cur.slam++;
+      else if (isGameLevel(r.contract)) cur.game++;
+      else cur.ps++;
+      tally.set(s, cur);
+    }
+    const a = (tally.get(srvArgs[0]) || { [slot]: 0 })[slot];
+    const b = (tally.get(jsArgs[0]) || { [slot]: 0 })[slot];
+    return a === b;
+  }
+  return false;
+}
+
+/** Helper for classifyBoard: per-side strain count map. */
+function groupBySideStrain(allResults, side) {
+  const map = new Map();
+  for (const r of allResults) {
+    if (!r.contract || r.contract === 'PASS') continue;
+    if (declaringDirection(r) !== side) continue;
+    const s = extractStrain(r.contract);
+    map.set(s, (map.get(s) || 0) + 1);
+  }
+  return map;
+}
+
+/** True when the actual contract is a par contract for the declaring side.
+ *  Same side + same level + same strain (ignores doubled). Mirrors
+ *  contract_matches_par(). With multiple par entries (ties), matching any
+ *  one counts. */
+function contractMatchesPar(actualContract, declarerIsNs, parArray) {
+  if (!actualContract || actualContract === 'PASS') return false;
+  const aLvl = actualContract[0];
+  const aStrain = extractStrain(actualContract);
+  for (const p of parArray) {
+    const pIsNs = p.declarer === 'N' || p.declarer === 'S';
+    if (pIsNs !== declarerIsNs) continue;
+    const pLvl = p.contract[0];
+    const pStrain = extractStrain(p.contract);
+    if (aLvl === pLvl && aStrain === pStrain) return true;
+  }
+  return false;
+}
+
+/** Compute the full BoardContext-equivalent for a board. Inputs are the
+ *  per-board result list (from session.boards[i].results) and the par array
+ *  (board.par). Mirrors compute_board_context's output shape, JS-side. */
+function computeBoardContext(allResults, parArray) {
+  const counts = fieldContractCounts(allResults);
+  const fc = fieldContract(allResults);
+  const flags = declaringFlags(allResults);
+  const competitiveNs = computeCompetitiveInfo(allResults, 'NS');
+  const competitiveEw = computeCompetitiveInfo(allResults, 'EW');
+  const boardType = classifyBoard(allResults, competitiveNs);
+  const trickAvgs = fieldTrickAverages(allResults);
+  return {
+    fieldContract: fc,
+    fieldContractCounts: counts,
+    fieldTrickAverages: trickAvgs,
+    boardType,
+    competitiveNs,
+    competitiveEw,
+    nsTypicallyDeclares: flags.nsTypicallyDeclares,
+    ewTypicallyDeclares: flags.ewTypicallyDeclares,
+    fieldDeclaringDirection: flags.fieldDeclaringDirection,
+    par: parArray || [],
+  };
+}
+
+// ---- Cause analysis ----
+//
+// Direct port of analysis::metrics::player::determine_cause_and_notes —
+// the 440-line decision tree that classifies each result as Good / Lucky /
+// Play / Defense / Auction / Unlucky and produces the textual notes.
+//
+// CauseContext is a record collecting everything the tree reads:
+//   role                            'Declarer' | 'Dummy' | 'Defender'
+//   matchpointPct                   number 0..100
+//   declarerVsField                 number | null (only when meaningful)
+//   matchedFieldContract            bool
+//   sameStrainAsField               bool
+//   playerSideTypicallyDeclares     bool
+//   fieldIsCrossDirection           bool
+//   wentDown                        bool
+//   ddTricks                        number 0..13 | null
+//   tricksMade                      number 0..13 | null
+//   boardType                       BoardType display string
+//   competitive                     CompetitiveInfo | null (player's perspective)
+//   contract                        canonical string | null | "PASS"
+//   fieldContract                   canonical string | null
+//   contractIsPar                   bool
+//
+// The tree returns { cause: string, notes: string }. Cause values mirror
+// the Rust ResultCause enum's Display form ("Good", "Lucky", ...).
+
+const SUIT_ORDER_RANK = { C: 0, D: 1, H: 2, S: 3, NT: 4 };
+
+/** Bid rank: 1C < 1D < 1H < 1S < 1NT < 2C < ... < 7NT. Mirrors bid_rank_of. */
+function bidRankOf(level, strain) { return (level - 1) * 5 + (SUIT_ORDER_RANK[strain] ?? 0); }
+/** Bid rank of a canonical contract string. */
+function bidRank(contract) {
+  const lvl = parseInt(contract[0], 10);
+  return bidRankOf(lvl, extractStrain(contract));
+}
+/** Smallest level (1-7) at which `strain` outbids `contract`. */
+function minOutbidLevel(contract, strain) {
+  const target = bidRank(contract);
+  for (let level = 1; level <= 7; level++) {
+    if (bidRankOf(level, strain) > target) return level;
+  }
+  return null;
+}
+function tricksWord(n) { return Math.abs(n) === 1 ? 'trick' : 'tricks'; }
+
+/** Round half away from zero — matches Rust's f64::round semantics.
+ *  JS's Math.round rounds half toward +Infinity, so Math.round(-0.5) === 0
+ *  while (-0.5_f64).round() === -1. This wrapper aligns the two so trick
+ *  diffs at .5 boundaries route into the same cause branch. */
+function rustRound(x) {
+  return Math.sign(x) * Math.round(Math.abs(x));
+}
+function levelOf(c) { return parseInt(c[0], 10); }
+
+/** Look up double-dummy tricks for a (declarer, strain) on a board.
+ *  Schema's double_dummy is {N|E|S|W: {C, D, H, S, NT}}. */
+function ddTricksLookup(board, declarer, strain) {
+  const dd = board.double_dummy;
+  if (!dd) return null;
+  const seat = dd[declarer];
+  if (!seat) return null;
+  // Schema uses "C", "D", "H", "S", "NT" as keys.
+  return seat[strain] ?? null;
+}
+
+/** Equivalent of Rust's format_auction_note. */
+function formatAuctionNote(actual, field) {
+  if (!actual && !field) return '';
+  if (actual && !field) return '';
+  if (!actual && field) return `missed ${field}`;
+  // Both present — actual is non-PASS canonical, field is non-null canonical.
+  const aLvl = levelOf(actual), fLvl = levelOf(field);
+  const aS = extractStrain(actual), fS = extractStrain(field);
+  if (aS !== fS) return `${aS} vs ${fS}`;
+  if (aLvl < fLvl) {
+    const missedGame = isGameLevel(field) && !isGameLevel(actual);
+    const missedSlam = fLvl >= 6 && aLvl < 6;
+    return missedGame || missedSlam ? `underbid (${field})` : '';
+  }
+  if (aLvl > fLvl) {
+    const extraGame = isGameLevel(actual) && !isGameLevel(field);
+    const extraSlam = aLvl >= 6 && fLvl < 6;
+    return extraGame || extraSlam ? `overbid (${field})` : '';
+  }
+  return '';
+}
+
+/** The full cause-analysis decision tree. Direct line-for-line port of
+ *  determine_cause_and_notes — see analysis/src/metrics/player.rs. */
+function determineCauseAndNotes(ctx) {
+  const isGood = ctx.matchpointPct >= 55.0;
+  const isBad = ctx.matchpointPct <= 45.0;
+
+  if (ctx.role === 'Declarer') {
+    if (ctx.contractIsPar && ctx.ddTricks != null && ctx.tricksMade != null && ctx.tricksMade === ctx.ddTricks) {
+      return { cause: 'Good', notes: `par (${ctx.ddTricks})` };
+    }
+    if (ctx.competitive && ctx.contract && ctx.contract !== 'PASS') {
+      const cStrain = extractStrain(ctx.contract);
+      const cLvl = levelOf(ctx.contract);
+      if (cStrain === ctx.competitive.playerStrain &&
+          bidRankOf(ctx.competitive.oppMaxLevel, ctx.competitive.oppStrain) > bidRankOf(cLvl, cStrain) &&
+          isGood) {
+        return { cause: 'Lucky', notes: 'opps failed to compete' };
+      }
+    }
+    if (ctx.fieldIsCrossDirection) {
+      if (isGood) return { cause: 'Good', notes: 'competed successfully' };
+      if (isBad) {
+        if (ctx.contract && ctx.contract !== 'PASS' && ctx.ddTricks != null && ctx.wentDown) {
+          const needed = levelOf(ctx.contract) + 6;
+          if (ctx.ddTricks >= needed) return { cause: 'Play', notes: `below DD (${ctx.ddTricks})` };
+        }
+        return { cause: 'Auction', notes: 'competed too high' };
+      }
+      return { cause: 'Auction', notes: 'competed' };
+    }
+    const auctionNote = !ctx.matchedFieldContract ? formatAuctionNote(ctx.contract, ctx.fieldContract) : '';
+    if (ctx.sameStrainAsField) {
+      if (ctx.matchedFieldContract && ctx.ddTricks != null && ctx.tricksMade != null) {
+        const ddDiff = ctx.tricksMade - ctx.ddTricks;
+        if (ddDiff > 0) return { cause: 'Lucky', notes: `defense slip (DD ${ctx.ddTricks})` };
+        if (ddDiff < 0) return { cause: 'Play', notes: `below DD (${ctx.ddTricks})` };
+        return { cause: 'Good', notes: `DD par (${ctx.ddTricks})` };
+      }
+      if (ctx.declarerVsField != null) {
+        const td = rustRound(ctx.declarerVsField);
+        if (td < 0) {
+          const tn = `${-td} ${tricksWord(td)} fewer`;
+          const note = auctionNote ? `${tn}, also ${auctionNote}` : tn;
+          return { cause: 'Play', notes: note };
+        }
+        if (td > 0) {
+          const tn = `+${td} ${tricksWord(td)}`;
+          const note = auctionNote ? `${tn}, also ${auctionNote}` : tn;
+          return { cause: isGood ? 'Good' : 'Play', notes: note };
+        }
+        if (ctx.matchedFieldContract) {
+          if (isGood) return { cause: 'Good', notes: '' };
+          if (isBad) return { cause: 'Unlucky', notes: 'field avg' };
+        }
+      }
+      if (ctx.wentDown && ctx.contract && ctx.contract !== 'PASS' && ctx.fieldContract) {
+        if (levelOf(ctx.contract) < levelOf(ctx.fieldContract)) {
+          return { cause: 'Play', notes: 'went down' };
+        }
+      }
+    } else {
+      if (ctx.competitive && ctx.fieldContract && extractStrain(ctx.fieldContract) === ctx.competitive.oppStrain) {
+        if (isGood) return { cause: 'Good', notes: 'competed successfully' };
+        if (isBad) return { cause: 'Auction', notes: 'competed too high' };
+        return { cause: 'Auction', notes: 'competed' };
+      }
+      if (auctionNote) {
+        return { cause: isGood ? 'Good' : 'Auction', notes: auctionNote };
+      }
+    }
+    if (!ctx.matchedFieldContract && auctionNote) {
+      return { cause: isGood ? 'Good' : 'Auction', notes: auctionNote };
+    }
+  } else if (ctx.role === 'Dummy') {
+    if (ctx.contractIsPar && ctx.ddTricks != null && ctx.tricksMade != null && ctx.tricksMade === ctx.ddTricks) {
+      return { cause: 'Good', notes: `par (${ctx.ddTricks})` };
+    }
+    if (ctx.competitive && ctx.contract && ctx.contract !== 'PASS') {
+      const cStrain = extractStrain(ctx.contract);
+      const cLvl = levelOf(ctx.contract);
+      if (cStrain === ctx.competitive.playerStrain &&
+          bidRankOf(ctx.competitive.oppMaxLevel, ctx.competitive.oppStrain) > bidRankOf(cLvl, cStrain) &&
+          isGood) {
+        return { cause: 'Lucky', notes: 'opps failed to compete' };
+      }
+    }
+    if (ctx.fieldIsCrossDirection) {
+      if (isGood) return { cause: 'Good', notes: 'competed successfully' };
+      if (isBad) {
+        if (ctx.contract && ctx.contract !== 'PASS' && ctx.ddTricks != null && ctx.wentDown) {
+          const needed = levelOf(ctx.contract) + 6;
+          if (ctx.ddTricks >= needed) return { cause: 'Play', notes: `pard below DD (${ctx.ddTricks})` };
+        }
+        return { cause: 'Auction', notes: 'competed too high' };
+      }
+      return { cause: 'Auction', notes: 'competed' };
+    }
+    const auctionNote = !ctx.matchedFieldContract ? formatAuctionNote(ctx.contract, ctx.fieldContract) : '';
+    if (ctx.sameStrainAsField) {
+      if (ctx.matchedFieldContract && ctx.ddTricks != null && ctx.tricksMade != null) {
+        const ddDiff = ctx.tricksMade - ctx.ddTricks;
+        if (ddDiff > 0) return { cause: 'Lucky', notes: `defense slip (DD ${ctx.ddTricks})` };
+        if (ddDiff < 0) return { cause: 'Play', notes: `pard below DD (${ctx.ddTricks})` };
+        return { cause: 'Good', notes: `DD par (${ctx.ddTricks})` };
+      }
+      if (ctx.declarerVsField != null) {
+        const td = rustRound(ctx.declarerVsField);
+        if (td < 0) {
+          const tn = `pard ${td} ${tricksWord(td)}`;
+          const note = auctionNote ? `${tn}, also ${auctionNote}` : tn;
+          return { cause: 'Play', notes: note };
+        }
+        if (td > 0) {
+          const tn = `pard +${td} ${tricksWord(td)}`;
+          const note = auctionNote ? `${tn}, also ${auctionNote}` : tn;
+          return { cause: isGood ? 'Good' : 'Play', notes: note };
+        }
+      }
+      if (ctx.wentDown && ctx.contract && ctx.contract !== 'PASS' && ctx.fieldContract) {
+        if (levelOf(ctx.contract) < levelOf(ctx.fieldContract)) {
+          return { cause: 'Play', notes: 'pard went down' };
+        }
+      }
+    } else {
+      if (ctx.competitive && ctx.fieldContract && extractStrain(ctx.fieldContract) === ctx.competitive.oppStrain) {
+        if (isGood) return { cause: 'Good', notes: 'competed successfully' };
+        if (isBad) return { cause: 'Auction', notes: 'competed too high' };
+        return { cause: 'Auction', notes: 'competed' };
+      }
+      if (auctionNote) {
+        return { cause: isGood ? 'Good' : 'Auction', notes: auctionNote };
+      }
+    }
+    if (!ctx.matchedFieldContract && auctionNote) {
+      return { cause: isGood ? 'Good' : 'Auction', notes: auctionNote };
+    }
+  } else if (ctx.role === 'Defender') {
+    if (ctx.wentDown && ctx.matchpointPct < 45.0 && ctx.contract && ctx.contract !== 'PASS') {
+      // Doubled char is the substring after level + strain
+      const sLen = extractStrain(ctx.contract) === 'NT' ? 2 : 1;
+      const doubledStr = ctx.contract.substring(1 + sLen);
+      if (doubledStr === '') {
+        return { cause: 'Auction', notes: "didn't double" };
+      }
+    }
+    if (ctx.competitive && ctx.contract && ctx.contract !== 'PASS') {
+      const cStrain = extractStrain(ctx.contract);
+      const cLvl = levelOf(ctx.contract);
+      if (cStrain === ctx.competitive.oppStrain &&
+          bidRankOf(ctx.competitive.playerMaxLevel, ctx.competitive.playerStrain) > bidRankOf(cLvl, cStrain)) {
+        const outbidLevel = minOutbidLevel(ctx.contract, ctx.competitive.playerStrain) ?? ctx.competitive.playerMaxLevel;
+        const note = `failed to compete to ${outbidLevel}${ctx.competitive.playerStrain}`;
+        if (isBad) return { cause: 'Auction', notes: note };
+        if (isGood) {
+          const oppsNote = ctx.wentDown ? 'opps bid too high' : 'opps stopped low';
+          return { cause: 'Lucky', notes: oppsNote };
+        }
+      }
+    }
+    if (ctx.fieldIsCrossDirection) {
+      if (isGood) return { cause: 'Lucky', notes: 'opps competed too high' };
+      if (isBad) return { cause: 'Auction', notes: 'failed to compete' };
+      return { cause: 'Lucky', notes: 'opps competed' };
+    }
+    if (ctx.sameStrainAsField) {
+      if (ctx.matchedFieldContract && ctx.ddTricks != null && ctx.tricksMade != null) {
+        const ddDiff = ctx.tricksMade - ctx.ddTricks;
+        if (ddDiff > 0) return { cause: 'Defense', notes: `DD slip (gave ${ddDiff} extra)` };
+        if (ddDiff < 0) return { cause: 'Lucky', notes: `held below DD (${ctx.ddTricks})` };
+        return { cause: 'Good', notes: `DD par (${ctx.ddTricks})` };
+      }
+      if (ctx.declarerVsField != null) {
+        const td = rustRound(ctx.declarerVsField);
+        if (td > 0) {
+          const note = `gave ${td} ${tricksWord(td)}`;
+          if (isBad) return { cause: 'Defense', notes: note };
+        } else if (td < 0) {
+          const note = `held to ${td}`;
+          if (isGood) return { cause: 'Good', notes: note };
+          return { cause: 'Defense', notes: note };
+        }
+      }
+      if (!ctx.matchedFieldContract && ctx.contract && ctx.contract !== 'PASS' && ctx.fieldContract) {
+        const aLvl = levelOf(ctx.contract), fLvl = levelOf(ctx.fieldContract);
+        if (aLvl < fLvl) {
+          const cross = (isGameLevel(ctx.fieldContract) && !isGameLevel(ctx.contract)) || (fLvl >= 6 && aLvl < 6);
+          if (cross) {
+            if (isGood) return { cause: 'Lucky', notes: 'opps underbid' };
+            if (isBad) return { cause: 'Unlucky', notes: 'opps underbid' };
+          }
+        } else if (aLvl > fLvl) {
+          const cross = (isGameLevel(ctx.contract) && !isGameLevel(ctx.fieldContract)) || (aLvl >= 6 && fLvl < 6);
+          if (cross) {
+            if (isGood) return { cause: 'Lucky', notes: 'opps overbid' };
+            if (isBad) return { cause: 'Unlucky', notes: 'opps overbid' };
+          }
+        }
+      }
+    } else if (ctx.contract && ctx.contract !== 'PASS' && ctx.fieldContract) {
+      if (ctx.playerSideTypicallyDeclares && bidRank(ctx.contract) < bidRank(ctx.fieldContract)) {
+        const note = `failed to compete to ${ctx.fieldContract}`;
+        if (isBad) return { cause: 'Auction', notes: note };
+        if (isGood) return { cause: 'Good', notes: note };
+      }
+      if (!ctx.playerSideTypicallyDeclares) {
+        if (isBad) return { cause: 'Unlucky', notes: 'opps superior contract' };
+        if (isGood) return { cause: 'Lucky', notes: 'opps inferior contract' };
+      }
+    }
+    if (isGood) return { cause: 'Lucky', notes: '' };
+    if (isBad) return { cause: 'Unlucky', notes: '' };
+  }
+
+  // Default by matchpoint result.
+  if (isGood) return { cause: 'Good', notes: '' };
+  if (isBad) return { cause: 'Unlucky', notes: '' };
+  return { cause: 'Good', notes: '' };
+}
+
+/** Build the CauseContext for a (board, result, role, direction) tuple,
+ *  reusing the previously-ported helpers. `boardCtx` is the output of
+ *  computeBoardContext. */
+function buildCauseContext(board, result, role, direction, boardCtx) {
+  const declarerIsNs = declaringDirection(result) === 'NS';
+  const fieldIsCrossDirection = result.contract && result.contract !== 'PASS' &&
+    boardCtx.fieldDeclaringDirection != null &&
+    declaringDirection(result) !== boardCtx.fieldDeclaringDirection;
+  const tricks = tricksMade(result);
+  const wentDown = tricks != null && result.contract && result.contract !== 'PASS' &&
+    tricks < levelOf(result.contract) + 6;
+  const ddT = (result.contract && result.contract !== 'PASS')
+    ? ddTricksLookup(board, result.declarer, extractStrain(result.contract))
+    : null;
+  const competitive = direction === 'NS' ? boardCtx.competitiveNs : boardCtx.competitiveEw;
+  const playerSideTypicallyDeclares = direction === 'NS'
+    ? boardCtx.nsTypicallyDeclares : boardCtx.ewTypicallyDeclares;
+  const matched = matchedFieldContract(result.contract, boardCtx.fieldContract);
+  const sameStrain = sameStrainAsField(result.contract, boardCtx.fieldContract);
+  const playerSideIsDeclarer = declarerIsNs === (direction === 'NS');
+  const contractIsPar = playerSideIsDeclarer && contractMatchesPar(result.contract, declarerIsNs, boardCtx.par);
+  const dvf = declarerVsField(result, boardCtx.fieldTrickAverages);
+  // matchpointPct is per-direction
+  return {
+    role,
+    matchpointPct: 0, // filled in by caller (it varies by use site)
+    declarerVsField: dvf,
+    matchedFieldContract: matched,
+    sameStrainAsField: sameStrain,
+    playerSideTypicallyDeclares,
+    fieldIsCrossDirection,
+    wentDown,
+    ddTricks: ddT,
+    tricksMade: tricks,
+    boardType: boardCtx.boardType,
+    competitive,
+    contract: result.contract,
+    fieldContract: boardCtx.fieldContract,
+    contractIsPar,
+  };
+}
+
+// ---- Orchestration: analyze_player / analyze_board ----
+//
+// These produce response objects in the same shape the server used to
+// return when there was a server-side analyzer (PlayerAnalysisResponse /
+// BoardAnalysisResponse). The server endpoints are gone now; this is the
+// only analyzer path.
+
+/** Find which seat (N/E/S/W) a player sits at in this result, or null. */
+function findPlayerSeat(result, normName) {
+  // ns_pair.players[0] = N, [1] = S; ew_pair.players[0] = W, [1] = E
+  // (see analysis/src/data/builder.rs for the convention).
+  const nNS = result.ns_pair?.players ?? [];
+  const nEW = result.ew_pair?.players ?? [];
+  if (nNS[0] && normalizeName(nNS[0].name) === normName) return 'N';
+  if (nNS[1] && normalizeName(nNS[1].name) === normName) return 'S';
+  if (nEW[0] && normalizeName(nEW[0].name) === normName) return 'W';
+  if (nEW[1] && normalizeName(nEW[1].name) === normName) return 'E';
+  return null;
+}
+
+/** Partner's display name + seat letter from this result, given the player's seat. */
+function partnerOf(result, seat) {
+  switch (seat) {
+    case 'N': return { name: result.ns_pair.players[1]?.name, seat: 'S' };
+    case 'S': return { name: result.ns_pair.players[0]?.name, seat: 'N' };
+    case 'W': return { name: result.ew_pair.players[1]?.name, seat: 'E' };
+    case 'E': return { name: result.ew_pair.players[0]?.name, seat: 'W' };
+    default: return { name: '', seat: null };
+  }
+}
+
+/** Determine the player's role on this result given their seat.
+ *  - Declarer: the player declared
+ *  - Dummy:    the player's PARTNER declared
+ *  - Defender: opponents declared (or PASS) */
+function playerRole(result, seat) {
+  if (!result.contract || result.contract === 'PASS') return 'Defender';
+  const declarer = result.declarer;
+  if (declarer === seat) return 'Declarer';
+  const partner = { N: 'S', S: 'N', E: 'W', W: 'E' }[seat];
+  if (declarer === partner) return 'Dummy';
+  return 'Defender';
+}
+
+/** Convert a schema Hand to a PBN suit string ("AKQ.JT.987.5432").
+ *  Schema uses "10" for ten; PBN uses "T". Empty suit becomes "".
+ *  Order is S.H.D.C per PBN convention. */
+function handToPBN(hand) {
+  if (!hand) return '...';
+  const conv = r => (r === '10' ? 'T' : r);
+  const fmt = arr => (arr || []).map(conv).join('');
+  return [fmt(hand.S), fmt(hand.H), fmt(hand.D), fmt(hand.C)].join('.');
+}
+
+/** Convert a schema Deal + dealer letter to the PBN deal string
+ *  "<dealer>:<hand1> <hand2> <hand3> <hand4>", clockwise from dealer. */
+function dealToPBN(deal, dealer) {
+  if (!deal) return null;
+  const clockwise = { N: ['N','E','S','W'], E: ['E','S','W','N'],
+                       S: ['S','W','N','E'], W: ['W','N','E','S'] };
+  const seq = clockwise[dealer] || clockwise.N;
+  return `${dealer}:${seq.map(d => handToPBN(deal[d])).join(' ')}`;
+}
+
+/** Render the par contract + optimum score display strings from the
+ *  schema's typed par[]. Mirrors render_par_display in types.rs.
+ *  Note: schema's Par has no tricks field, so the trick suffix
+ *  ("+2"/"=") is omitted. The Rust path derives it from score, but
+ *  porting bridge scoring rules to JS isn't worth the test-phase cost. */
+function renderParDisplayJS(par) {
+  if (!par || par.length === 0) return { contract: null, score: null };
+  const sideOf = d => (d === 'N' || d === 'S') ? 'NS' : 'EW';
+  const contracts = par.map(p => `${sideOf(p.declarer)} ${p.contract}`).join('; ');
+  const first = par[0];
+  const score = first.score >= 0 ? `NS ${first.score}` : `EW ${-first.score}`;
+  return { contract: contracts, score };
+}
+
+/** Build a BoardDealInfo-shape object from a schema board, matching what
+ *  the server's analyze_board response produces. Returns null when the
+ *  source had no deal data — the SPA's hand viewer hides itself in that
+ *  case. */
+function buildDealInfo(board) {
+  if (!board.deal) return null;
+  const { contract: parContract, score: optimumScore } =
+    renderParDisplayJS(board.par || []);
+  return {
+    pbn: dealToPBN(board.deal, board.dealer),
+    dealer: board.dealer,
+    vulnerability: board.vulnerability,
+    par_contract: parContract,
+    optimum_score: optimumScore,
+  };
+}
+
+/** Build a result string like "4SN+1" / "3NTE=" / "2HS-2" / "Pass".
+ *  Mirrors build_result_string in player.rs. */
+function buildResultString(result) {
+  if (!result.contract || result.contract === 'PASS') return 'Pass';
+  const declCh = result.declarer ?? 'N';
+  const tricks = tricksMade(result);
+  if (tricks == null) return `${result.contract}${declCh}`;
+  const rel = tricks - (levelOf(result.contract) + 6);
+  if (rel === 0) return `${result.contract}${declCh}=`;
+  if (rel > 0) return `${result.contract}${declCh}+${rel}`;
+  return `${result.contract}${declCh}${rel}`;
+}
+
+/** Run the JS analyzer on one player. Returns a PlayerAnalysisResponse-shape
+ *  object, or null if the player has no rows in this session. */
+function jsAnalyzePlayer(game, sessionIdx, playerName) {
+  const session = pickSession(game, sessionIdx);
+  if (!session) return null;
+  const norm = normalizeName(playerName);
+  // Walk every (board, result) and pick out rows where the player sat.
+  const rows = [];
+  let canonicalName = playerName;
+  for (const board of session.boards) {
+    for (const result of board.results) {
+      const seat = findPlayerSeat(result, norm);
+      if (seat) {
+        rows.push({ board, result, seat });
+        const players = (seat === 'N' || seat === 'S' ? result.ns_pair : result.ew_pair).players;
+        const idx = (seat === 'N' || seat === 'W') ? 0 : 1;
+        if (players[idx]?.name) canonicalName = displayName(players[idx].name);
+      }
+    }
+  }
+  if (rows.length === 0) return null;
+
+  const partners = new Set();
+  const seats = new Set();
+  let totalMP = 0;
+  let declCount = 0, declMP = 0;
+  let dummyCount = 0, dummyMP = 0;
+  let defCount = 0, defMP = 0;
+  let dvfSum = 0, dvfCount = 0;
+  let fieldMatchCount = 0;
+  let strat = null;
+  let mpAward = null;
+  const board_results = [];
+
+  for (const { board, result, seat } of rows) {
+    const direction = (seat === 'N' || seat === 'S') ? 'NS' : 'EW';
+    const pairRecord = direction === 'NS' ? result.ns_pair : result.ew_pair;
+    if (strat == null && pairRecord?.strat != null) strat = pairRecord.strat;
+    if (mpAward == null) {
+      const playerIdx = (seat === 'N' || seat === 'W') ? 0 : 1;
+      const awards = pairRecord?.players?.[playerIdx]?.masterpoints_earned;
+      if (awards?.length) mpAward = summarizeMpAwards(awards);
+    }
+    const role = playerRole(result, seat);
+    const ctx = computeBoardContext(board.results, board.par);
+    const mp = calculateMatchpointPct(result, board.results, direction);
+    const cc = buildCauseContext(board, result, role, direction, ctx);
+    cc.matchpointPct = mp;
+    const { cause, notes } = determineCauseAndNotes(cc);
+    const partner = partnerOf(result, seat);
+
+    seats.add(seat);
+    if (partner.name) partners.add(displayName(partner.name));
+    totalMP += mp;
+    if (role === 'Declarer') { declCount++; declMP += mp;
+      if (cc.declarerVsField != null) { dvfSum += cc.declarerVsField; dvfCount++; }
+    } else if (role === 'Dummy') { dummyCount++; dummyMP += mp; }
+    else { defCount++; defMP += mp; }
+    if (cc.matchedFieldContract) fieldMatchCount++;
+
+    const ns_score = result.score ?? 0;
+    board_results.push({
+      board_number: board.number,
+      direction,
+      seat,
+      partner: displayName(partner.name || ''),
+      contract: result.contract,
+      result_str: buildResultString(result),
+      ns_score,
+      player_score: direction === 'NS' ? ns_score : -ns_score,
+      matchpoint_pct: mp,
+      role,
+      // Server only sets declarer_vs_field on PlayerBoardResult when the
+      // player actually declared; mirror that gate.
+      declarer_vs_field: role === 'Declarer' ? cc.declarerVsField : null,
+      field_contract: ctx.fieldContract,
+      board_type: ctx.boardType,
+      matched_field_contract: cc.matchedFieldContract,
+      cause,
+      notes,
+      bbo_url: null, // LIN URL builder not yet ported.
+    });
+  }
+
+  return {
+    player_name: canonicalName,
+    partners: [...partners].sort(),
+    seats: [...seats].sort(),
+    boards_played: rows.length,
+    boards_declared: declCount,
+    avg_matchpoint_pct: totalMP / rows.length,
+    declaring_mp_pct: declCount > 0 ? declMP / declCount : null,
+    dummy_mp_pct: dummyCount > 0 ? dummyMP / dummyCount : null,
+    defending_mp_pct: defCount > 0 ? defMP / defCount : null,
+    avg_declarer_vs_field: dvfCount > 0 ? dvfSum / dvfCount : null,
+    field_contract_pct: (fieldMatchCount / rows.length) * 100,
+    strat,
+    mp_award: mpAward,
+    board_results,
+  };
+}
+
+/** Run the JS analyzer on one board. Returns a BoardAnalysisResponse-shape
+ *  object, or null if the board doesn't exist in the session. */
+function jsAnalyzeBoard(game, sessionIdx, boardNum) {
+  const session = pickSession(game, sessionIdx);
+  if (!session) return null;
+  const board = session.boards.find(b => b.number === boardNum);
+  if (!board) return null;
+  const ctx = computeBoardContext(board.results, board.par);
+  const results = board.results.map(r => {
+    const isPass = !r.contract || r.contract === 'PASS';
+    const declSide = isPass ? null : declaringDirection(r);
+    const nsRole = isPass ? 'Defender' : (declSide === 'NS' ? 'Declarer' : 'Defender');
+    const ewRole = isPass ? 'Defender' : (declSide === 'EW' ? 'Declarer' : 'Defender');
+    const nsMP = calculateMatchpointPct(r, board.results, 'NS');
+    const ewMP = calculateMatchpointPct(r, board.results, 'EW');
+
+    const nsCC = buildCauseContext(board, r, nsRole, 'NS', ctx);
+    nsCC.matchpointPct = nsMP;
+    const ns = determineCauseAndNotes(nsCC);
+
+    const ewCC = buildCauseContext(board, r, ewRole, 'EW', ctx);
+    ewCC.matchpointPct = ewMP;
+    const ew = determineCauseAndNotes(ewCC);
+
+    const ns_p1 = displayName(r.ns_pair.players[0]?.name ?? '');
+    const ns_p2 = displayName(r.ns_pair.players[1]?.name ?? '');
+    const ew_p1 = displayName(r.ew_pair.players[0]?.name ?? '');
+    const ew_p2 = displayName(r.ew_pair.players[1]?.name ?? '');
+    const declarer_name = r.declarer === 'N' ? ns_p1 : r.declarer === 'S' ? ns_p2 :
+                          r.declarer === 'W' ? ew_p1 : r.declarer === 'E' ? ew_p2 : '';
+
+    const dvf = nsCC.declarerVsField; // same value from both perspectives
+    return {
+      ns_pair: `${ns_p1} - ${ns_p2}`,
+      ew_pair: `${ew_p1} - ${ew_p2}`,
+      ns_player1: ns_p1, ns_player2: ns_p2,
+      ew_player1: ew_p1, ew_player2: ew_p2,
+      contract: r.contract,
+      declarer_direction: r.declarer ?? 'N',
+      declarer_name,
+      result_str: buildResultString(r),
+      ns_score: r.score ?? 0,
+      ns_analysis: {
+        matchpoint_pct: nsMP, role: nsRole, declarer_vs_field: dvf,
+        matched_field_contract: nsCC.matchedFieldContract, cause: ns.cause, notes: ns.notes,
+      },
+      ew_analysis: {
+        matchpoint_pct: ewMP, role: ewRole, declarer_vs_field: dvf,
+        matched_field_contract: ewCC.matchedFieldContract, cause: ew.cause, notes: ew.notes,
+      },
+      // The schema's per-row handviewer_url is populated by every adapter
+      // (extension and the BWS+PBN adapter), so we just pass it through.
+      bbo_url: r.handviewer_url ?? null,
+    };
+  });
+  // Sort by NS matchpoint % desc — same as the server's analyze_board.
+  results.sort((a, b) => b.ns_analysis.matchpoint_pct - a.ns_analysis.matchpoint_pct);
+  // Server's BoardAnalysisResponse.bbo_url is the first row's URL as a
+  // board-level default (used when no row has rendered yet).
+  const boardBbo = results.find(r => r.bbo_url)?.bbo_url ?? null;
+  return {
+    board_number: board.number,
+    field_contract: ctx.fieldContract,
+    board_type: ctx.boardType,
+    bbo_url: boardBbo,
+    deal_info: buildDealInfo(board),
+    results,
+  };
+}
+
+
+/** Build a query-string suffix that always passes session, plus session_idx
+ *  when more than one session is in the upload. */
+function sessionParams() {
+  let qs = `session=${sessionId}`;
+  if (cachedSessions.length > 1) qs += `&session_idx=${currentSessionIdx}`;
+  return qs;
+}
+
+/** Reset all in-flight session/upload state so a new upload starts clean.
+ *  Without this, a stale `cachedSessions` from a prior multi-session upload
+ *  would leak into the next upload's autoFillFromStorage refetch and produce
+ *  out-of-range session_idx errors. */
+function resetSessionState() {
+  sessionId = null;
+  cachedPlayers = [];
+  cachedBoards = [];
+  cachedSessions = [];
+  currentSessionIdx = 0;
+  currentBoard = null;
+  currentPlayerName = null;
+  cachedNormalized = null;
+  try { sessionStorage.removeItem('bc-game'); } catch (e) {}
+}
+
+/** Fetch + JSON wrapper that throws the response body text (not a JSON
+ *  parse error) when the request fails. Use anywhere a fetch result is
+ *  unconditionally fed into .json(). */
+async function getJSON(url, init) {
+  const res = await fetch(url, init);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+// ==================== Upload ====================
+const fileInput = document.getElementById('file-input');
+const fileNames = document.getElementById('file-names');
+const uploadArea = document.getElementById('upload-area');
+
+fileInput.addEventListener('change', () => {
+  const files = Array.from(fileInput.files);
+  if (files.length) { fileNames.textContent = files.map(f => f.name).join(', '); doUpload(files); }
+});
+uploadArea.addEventListener('dragover', e => { e.preventDefault(); uploadArea.classList.add('dragover'); });
+uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
+uploadArea.addEventListener('drop', e => {
+  e.preventDefault(); uploadArea.classList.remove('dragover');
+  const files = Array.from(e.dataTransfer.files);
+  if (files.length) { fileNames.textContent = files.map(f => f.name).join(', '); doUpload(files); }
+});
+
+async function doUpload(files, addTo) {
+  const formData = new FormData();
+  let hasPbn = false;
+  for (const f of files) {
+    const ext = f.name.split('.').pop().toLowerCase();
+    formData.append(ext === 'pbn' ? 'pbn' : 'bws', f);
+    if (ext === 'pbn') hasPbn = true;
+  }
+  // Drop any stale state before the upload — a prior multi-session JSON
+  // load could otherwise leave cachedSessions populated, which sessionParams()
+  // would then use to append an out-of-range session_idx during the
+  // autoFillFromStorage refetch below.
+  resetSessionState();
+  showLoading(true); showError('');
+  try {
+    const url = addTo ? `${BASE}/api/upload?add_to=${addTo}` : `${BASE}/api/upload`;
+    const res = await fetch(url, { method: 'POST', body: formData });
+    if (!res.ok) throw new Error(await res.text());
+    let data = await res.json();
+    sessionId = data.session_id;
+    // Pre-populate cachedSessions so sessionParams() reflects the new
+    // upload's session list during autoFillFromStorage's refetch.
+    cachedSessions = data.sessions || [];
+
+    // Merge any real names from this upload into localStorage
+    mergeNamesToStorage(data.player_acbl);
+
+    // If any placeholders can be resolved from localStorage, submit and refresh
+    data = await autoFillFromStorage(data);
+
+    applyUploadResponse(data, { hasPbn });
+  } catch (e) { showError(e.message); }
+  finally { showLoading(false); }
+}
+
+/** Wire an UploadResponse (from /api/upload or /api/upload-normalized)
+ *  into the UI: cache state, hide upload chrome, show event header,
+ *  build session selector, render the player view. */
+function applyUploadResponse(data, opts) {
+  opts = opts || {};
+  // Cache inline normalized JSON in sessionStorage so loadNormalized() skips
+  // the second fetch and works offline after the initial upload.
+  if (data.normalized) {
+    cachedNormalized = data.normalized;
+    try { sessionStorage.setItem('bc-game', JSON.stringify(data.normalized)); } catch (e) {}
+    try { autoSaveTrackedPlayers(data.normalized); } catch (e) {}
+  }
+  cachedPlayers = data.players;
+  cachedBoards = data.boards;
+  cachedSessions = data.sessions || [];
+  currentSessionIdx = 0;
+  lastUpload = data;
+  document.getElementById('event-name').textContent = data.event_name || 'Game Results';
+  document.getElementById('event-date').textContent = data.event_date || '';
+  uploadArea.classList.add('hidden');
+  document.getElementById('analyze-empty').classList.add('hidden');
+  document.getElementById('analyze-error').classList.add('hidden');
+  document.getElementById('download-help').classList.add('hidden');
+  document.getElementById('event-header').classList.remove('hidden');
+  // Hide the BWS-only PBN notice for normalized uploads — the schema
+  // always carries full board data.
+  const pbnHidden = opts.hasPbn || data.has_pbn || cachedSessions.length > 1;
+  document.getElementById('pbn-notice').classList.toggle('hidden', pbnHidden);
+  renderSessionSelector();
+  showNamesNotice(data);
+  switchView('players');
+}
+
+/** Populate the session-selector dropdown and wire its change handler.
+ *  Hidden when there's only one session. */
+function renderSessionSelector() {
+  const sel = document.getElementById('session-selector');
+  if (cachedSessions.length <= 1) {
+    sel.classList.add('hidden');
+    sel.innerHTML = '';
+    return;
+  }
+  sel.classList.remove('hidden');
+  sel.innerHTML = cachedSessions
+    .map(s => `<option value="${s.session_idx}">${s.label} — ${s.board_count} boards</option>`)
+    .join('');
+  sel.value = String(currentSessionIdx);
+  sel.onchange = async () => {
+    currentSessionIdx = parseInt(sel.value, 10) || 0;
+    // Refresh the cached lists from the new session and re-render.
+    try {
+      showLoading(true); showError('');
+      const game = await loadNormalized();
+      cachedPlayers = derivePlayers(game, currentSessionIdx);
+      cachedBoards = deriveBoards(game, currentSessionIdx);
+      currentBoard = null;
+      currentPlayerName = null;
+      hideAll();
+      switchView('players');
+    } catch (e) { showError(e.message); }
+    finally { showLoading(false); }
+  };
+}
+
+// ==================== Name Storage / Overrides ====================
+const NAMES_KEY = 'bridge-analysis-names';
+
+/** Apply ACBL-number → name overrides to a game in memory. Mirrors the
+ *  server-side apply_name_overrides in upload_helpers.rs. */
+function applyNameOverridesClient(game, overrides) {
+  for (const t of game.tournaments || []) {
+    for (const ev of t.events || []) {
+      for (const s of ev.sessions || []) {
+        for (const b of s.boards || []) {
+          for (const r of b.results || []) {
+            for (const pair of [r.ns_pair, r.ew_pair]) {
+              for (const p of pair?.players || []) {
+                if (p.acbl_id && overrides[p.acbl_id]) p.name = overrides[p.acbl_id];
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/** Persist the current cachedNormalized to sessionStorage after an in-memory mutation. */
+function flushNormalizedToStorage() {
+  if (!cachedNormalized) return;
+  try { sessionStorage.setItem('bc-game', JSON.stringify(cachedNormalized)); } catch (e) {}
+}
+let lastUpload = null; // most recent upload response, for name-override flow
+
+function getStoredNames() {
+  try { return JSON.parse(localStorage.getItem(NAMES_KEY) || '{}'); }
+  catch (e) { return {}; }
+}
+
+function saveStoredNames(dict) {
+  try { localStorage.setItem(NAMES_KEY, JSON.stringify(dict)); } catch (e) {}
+}
+
+function mergeNamesToStorage(playerAcbl) {
+  if (!playerAcbl) return;
+  const stored = getStoredNames();
+  let added = 0;
+  for (const [name, acbl] of Object.entries(playerAcbl)) {
+    if (acbl && !stored[acbl]) { stored[acbl] = name; added++; }
+    else if (acbl && stored[acbl] !== name) { stored[acbl] = name; added++; }
+  }
+  if (added > 0) saveStoredNames(stored);
+}
+
+/** If any missing_players have ACBL numbers we know from localStorage,
+ *  apply them client-side to the inline normalized JSON. */
+async function autoFillFromStorage(data) {
+  if (!data.missing_players || data.missing_players.length === 0) return data;
+  const stored = getStoredNames();
+  const toApply = {};
+  for (const mp of data.missing_players) {
+    if (mp.acbl_number && stored[mp.acbl_number]) {
+      toApply[mp.acbl_number] = stored[mp.acbl_number];
+    }
+  }
+  if (Object.keys(toApply).length === 0) return data;
+  // Apply overrides to the already-cached normalized game and flush to sessionStorage.
+  if (cachedNormalized) {
+    applyNameOverridesClient(cachedNormalized, toApply);
+    flushNormalizedToStorage();
+    data.players = derivePlayers(cachedNormalized, currentSessionIdx);
+  }
+  data.missing_players = data.missing_players.filter(mp => !toApply[mp.acbl_number]);
+  data.missing_names = data.missing_players.length;
+  for (const [acbl, name] of Object.entries(toApply)) data.player_acbl[name] = acbl;
+  return data;
+}
+
+function showNamesNotice(data) {
+  const notice = document.getElementById('names-notice');
+  if (!data.missing_names) {
+    notice.classList.add('hidden');
+    return;
+  }
+  notice.classList.remove('hidden');
+  document.getElementById('names-missing-count').textContent =
+    `${data.missing_names} player${data.missing_names === 1 ? '' : 's'} still missing`;
+  // Hide the paste area until user clicks the button
+  document.getElementById('paste-names-area').classList.add('hidden');
+  document.getElementById('paste-names-text').value = '';
+  document.getElementById('paste-names-result').textContent = '';
+}
+
+// Toggle paste area
+document.getElementById('paste-names-toggle').addEventListener('click', () => {
+  document.getElementById('paste-names-area').classList.toggle('hidden');
+});
+
+// Parse pasted text → apply names
+document.getElementById('paste-names-apply').addEventListener('click', async () => {
+  const text = document.getElementById('paste-names-text').value;
+  const resultEl = document.getElementById('paste-names-result');
+  if (!text.trim()) { resultEl.textContent = 'Paste some text first'; return; }
+  if (!lastUpload) { resultEl.textContent = 'No upload loaded'; return; }
+
+  const pairs = parsePairText(text);
+  if (Object.keys(pairs).length === 0) {
+    resultEl.textContent = 'Couldn\'t find any pair lines in the pasted text';
+    return;
+  }
+
+  // Map pair_num -> [name1, name2] to ACBL# -> name using pair_acbl from upload
+  const overrides = {};
+  let matched = 0;
+  for (const [pairNum, names] of Object.entries(pairs)) {
+    const acblPair = lastUpload.pair_acbl[pairNum];
+    if (!acblPair) continue;
+    // acblPair is [first_acbl, second_acbl] in display order
+    if (acblPair[0] && names[0]) { overrides[acblPair[0]] = names[0]; matched++; }
+    if (acblPair[1] && names[1]) { overrides[acblPair[1]] = names[1]; matched++; }
+  }
+
+  if (matched === 0) {
+    resultEl.textContent = 'Pairs parsed but none matched this game\'s pair numbers';
+    return;
+  }
+
+  // Apply client-side and save to localStorage.
+  const stored = getStoredNames();
+  for (const [acbl, name] of Object.entries(overrides)) stored[acbl] = name;
+  saveStoredNames(stored);
+
+  const game = await loadNormalized();
+  applyNameOverridesClient(game, overrides);
+  flushNormalizedToStorage();
+  cachedPlayers = derivePlayers(game, currentSessionIdx);
+  // Remove now-filled placeholders from missing_players
+  lastUpload.missing_players = lastUpload.missing_players.filter(mp => !overrides[mp.acbl_number]);
+  lastUpload.missing_names = lastUpload.missing_players.length;
+  lastUpload.players = updated.players;
+  showNamesNotice(lastUpload);
+  showPlayerGrid();
+  resultEl.textContent = `Applied ${matched} name${matched === 1 ? '' : 's'}`;
+});
+
+/** Parse pasted ACBL Live pair list. Returns {pair_num: [name1, name2]}. */
+function parsePairText(text) {
+  const pairs = {};
+  const lines = text.split(/\r?\n/);
+  for (const line of lines) {
+    // Expected format: "<pair_num> TAB <name1> - <name2> TAB ..."
+    // Tolerant match: starts with digits, then whitespace/tab, then names
+    // separated by " - ", up to whitespace + letter (strat A/B/C).
+    const m = line.match(/^\s*(\d+)\s+(.+?)\s+-\s+(.+?)(?:\s{2,}|\s+[A-Z](?:\s|$)|\t)/);
+    if (!m) continue;
+    const pairNum = m[1];
+    const name1 = m[2].trim();
+    const name2 = m[3].trim();
+    if (name1 && name2) pairs[pairNum] = [name1, name2];
+  }
+  return pairs;
+}
+
+document.getElementById('pbn-add-input').addEventListener('change', async (e) => {
+  const file = e.target.files[0];
+  if (file && sessionId) doUpload([file], sessionId);
+});
+document.getElementById('save-json-btn').addEventListener('click', async () => {
+  const btn = document.getElementById('save-json-btn');
+  try {
+    const data = cachedNormalized ?? await loadNormalized();
+    const json = JSON.stringify(data, null, 2);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const t = data?.tournaments?.[0];
+    const source = data?.source ?? 'bridge';
+    const sanction = t?.sanction ?? 'unknown';
+    const date = t?.events?.[0]?.date ?? data?.fetched_at?.slice(0, 10) ?? 'unknown';
+    a.download = `${source}-${sanction}-${date}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    const orig = btn.textContent;
+    btn.textContent = 'Saved!';
+    setTimeout(() => { btn.textContent = orig; }, 1500);
+  } catch (e) {
+    btn.textContent = 'Error';
+    setTimeout(() => { btn.textContent = 'Save JSON'; }, 2000);
+  }
+});
+document.getElementById('new-file-btn').addEventListener('click', () => {
+  resetSessionState();
+  fileInput.value = ''; fileNames.textContent = '';
+  document.getElementById('session-selector').classList.add('hidden');
+  uploadArea.classList.remove('hidden');
+  document.getElementById('download-help').classList.remove('hidden');
+  document.getElementById('event-header').classList.add('hidden');
+  document.getElementById('player-grid').classList.add('hidden');
+  document.getElementById('board-grid').classList.add('hidden');
+  document.getElementById('pbn-notice').classList.add('hidden');
+  document.getElementById('names-notice').classList.add('hidden');
+  hideAll();
+});
+
+// ==================== View Switching ====================
+function switchView(view) {
+  document.getElementById('tab-players').classList.toggle('active', view === 'players');
+  document.getElementById('tab-boards').classList.toggle('active', view === 'boards');
+  document.getElementById('tab-history').classList.toggle('active', view === 'history');
+  hideAll();
+  if (view === 'players') {
+    document.getElementById('board-grid').classList.add('hidden');
+    document.getElementById('history-view').classList.add('hidden');
+    showPlayerGrid();
+  } else if (view === 'history') {
+    document.getElementById('player-grid').classList.add('hidden');
+    document.getElementById('board-grid').classList.add('hidden');
+    document.getElementById('history-view').classList.remove('hidden');
+    renderHistory();
+  } else {
+    document.getElementById('player-grid').classList.add('hidden');
+    document.getElementById('history-view').classList.add('hidden');
+    showBoardGrid();
+    // Default to first board if none is selected yet
+    if (!currentBoard && cachedBoards.length) {
+      selectBoard(null, cachedBoards[0]);
+    }
+  }
+}
+
+function showPlayerGrid() {
+  const grid = document.getElementById('player-grid');
+  grid.classList.remove('hidden');
+  document.getElementById('player-names').innerHTML = cachedPlayers.map(name =>
+    `<button onclick="selectPlayer(this,'${esc(name)}')">${name}</button>`
+  ).join('');
+}
+
+function showBoardGrid() {
+  const grid = document.getElementById('board-grid');
+  grid.classList.remove('hidden');
+  const arrows = `<button class="nav-arrow" onclick="navBoard(-1)" title="Previous board">\u25C0</button>`;
+  const arrowR = `<button class="nav-arrow" onclick="navBoard(1)" title="Next board">\u25B6</button>`;
+  document.getElementById('board-numbers').innerHTML = arrows +
+    cachedBoards.map(num =>
+      `<button onclick="selectBoard(this,${num})" ${num === currentBoard ? 'class="active"' : ''}>${num}</button>`
+    ).join('') + arrowR;
+}
+
+// ==================== Player ====================
+async function selectPlayer(btn, name) {
+  document.querySelectorAll('.name-grid button').forEach(b => b.classList.remove('active'));
+  if (btn) btn.classList.add('active');
+  currentPlayerName = name;
+  showLoading(true); hideAll(); showError('');
+  try {
+    const game = await loadNormalized();
+    const data = jsAnalyzePlayer(game, currentSessionIdx, name);
+    if (!data) throw new Error(`Player '${name}' not found`);
+    try { savePlayerToHistory(name, data); } catch (e) {}
+    renderPlayer(data);
+    // Hide the player grid once results show
+    document.getElementById('player-grid').classList.add('hidden');
+  } catch (e) { showError(e.message); }
+  finally { showLoading(false); }
+}
+
+function renderPlayer(data) {
+  document.getElementById('player-results').classList.remove('hidden');
+  const mpColor = data.avg_matchpoint_pct >= 50 ? 'mp-good' : 'mp-bad';
+  const partners = data.partners.map(p =>
+    `<span class="clickable" onclick="goToPlayer('${esc(p)}')">${p}</span>`
+  ).join(', ');
+
+  document.getElementById('player-summary').innerHTML = `
+    <div class="stat"><div class="stat-value">${data.player_name}</div><div class="stat-label">Player</div></div>
+    <div class="stat"><div class="stat-value">${partners}</div><div class="stat-label">Partner</div></div>
+    <div class="stat"><div class="stat-value">${data.seats.join(', ')}</div><div class="stat-label">Seat</div></div>
+    <div class="stat"><div class="stat-value ${mpColor}">${data.avg_matchpoint_pct.toFixed(1)}%</div><div class="stat-label">Avg MP%</div></div>
+  `;
+  const f = (v, fmt) => v != null ? (fmt ? fmt(v) : v) : '-';
+  document.getElementById('player-summary2').innerHTML = `
+    <div class="stat"><div class="stat-value">${data.boards_played}</div><div class="stat-label">Boards</div></div>
+    <div class="stat"><div class="stat-value">${data.boards_declared}</div><div class="stat-label">Declared</div></div>
+    <div class="stat"><div class="stat-value"><span class="stat-declarer">${f(data.declaring_mp_pct, v=>v.toFixed(1)+'%')}</span></div><div class="stat-label">Declaring</div></div>
+    <div class="stat"><div class="stat-value"><span class="stat-dummy">${f(data.dummy_mp_pct, v=>v.toFixed(1)+'%')}</span></div><div class="stat-label">Dummy</div></div>
+    <div class="stat"><div class="stat-value">${f(data.defending_mp_pct, v=>v.toFixed(1)+'%')}</div><div class="stat-label">Defending</div></div>
+    <div class="stat"><div class="stat-value">${f(data.avg_declarer_vs_field, v=>(v>=0?'+':'')+v.toFixed(2))}</div><div class="stat-label">Decl vs Field</div></div>
+    <div class="stat"><div class="stat-value">${data.field_contract_pct.toFixed(0)}%</div><div class="stat-label">Field Contract</div></div>
+  `;
+
+  document.getElementById('player-thead').innerHTML = `<tr>
+    <th>Board</th><th>Dir</th><th>Contract</th><th class="text-right">Score</th>
+    <th class="text-right">MP%</th><th>Field</th><th>Cause</th><th>Notes</th>
+  </tr>`;
+
+  document.getElementById('player-tbody').innerHTML = data.board_results.map(r => {
+    const rowCls = r.role === 'Declarer' ? 'row-declarer' :
+                   r.role === 'Dummy' ? 'row-dummy' : '';
+    return `<tr class="${rowCls}">
+    <td><a href="javascript:void(0)" onclick="goToBoard(${r.board_number})">${r.board_number}</a></td>
+    <td>${r.direction}</td>
+    <td>${fmtContract(r.result_str)}</td>
+    <td class="text-right">${r.player_score}</td>
+    <td class="text-right">${fmtMp(r.matchpoint_pct)}</td>
+    <td>${fmtField(r.field_contract, r.matched_field_contract)}</td>
+    <td><span class="cause cause-${r.cause}">${r.cause}</span></td>
+    <td style="white-space:normal;max-width:200px;">${r.notes}</td>
+  </tr>`;
+  }).join('');
+}
+
+function goToPlayer(name) {
+  switchView('players');
+  const btns = document.querySelectorAll('.name-grid button');
+  for (const btn of btns) { if (btn.textContent === name) { selectPlayer(btn, name); return; } }
+  selectPlayer(null, name);
+}
+
+// ==================== Board ====================
+async function selectBoard(btn, num, keepPlayer) {
+  // Highlight the button for this board number.
+  // If called without a btn (e.g. from nav arrows), look it up by number.
+  document.querySelectorAll('.board-grid button:not(.nav-arrow)').forEach(b => {
+    b.classList.toggle('active', b === btn || parseInt(b.textContent, 10) === num);
+  });
+  currentBoard = num;
+  if (!keepPlayer) currentPlayerName = null;
+  document.getElementById('player-results').classList.add('hidden');
+  showLoading(true); showError('');
+  try {
+    const game = await loadNormalized();
+    const data = jsAnalyzeBoard(game, currentSessionIdx, num);
+    if (!data) throw new Error(`Board ${num} not found`);
+    renderBoard(data);
+  } catch (e) { showError(e.message); }
+  finally { showLoading(false); }
+}
+
+function goToBoard(num) {
+  // Switch to board view and load that board, keeping current player for highlighting
+  document.getElementById('tab-players').classList.remove('active');
+  document.getElementById('tab-boards').classList.add('active');
+  document.getElementById('player-grid').classList.add('hidden');
+  hideAll();
+  showBoardGrid();
+  currentBoard = num;
+  document.querySelectorAll('.board-grid button:not(.nav-arrow)').forEach(b => {
+    b.classList.toggle('active', parseInt(b.textContent) === num);
+  });
+  selectBoard(null, num, true); // keepPlayer=true to highlight their row
+}
+
+function navBoard(delta) {
+  if (!currentBoard) { if (cachedBoards.length) goToBoard(cachedBoards[0]); return; }
+  const idx = cachedBoards.indexOf(currentBoard);
+  const next = idx + delta;
+  if (next >= 0 && next < cachedBoards.length) goToBoard(cachedBoards[next]);
+}
+
+let currentBoardData = null;
+let activeRowIdx = 0;
+let cachedDDTricks = null; // Store DD data for re-rendering on row change
+let cachedBBAContract = null; // {seat, suitIdx} from BBA auction, or null
+
+function renderBoard(data) {
+  currentBoardData = data;
+  cachedBBAContract = null;
+  document.getElementById('board-results').classList.remove('hidden');
+
+  // Determine initial row: player's row if navigating from player view, else first
+  activeRowIdx = 0;
+  if (currentPlayerName) {
+    for (let i = 0; i < data.results.length; i++) {
+      const r = data.results[i];
+      if ([r.ns_player1, r.ns_player2, r.ew_player1, r.ew_player2].includes(currentPlayerName)) {
+        activeRowIdx = i;
+        break;
+      }
+    }
+  }
+
+  // Show viewer row if any result has a URL
+  const hasViewer = data.results.some(r => r.bbo_url);
+  document.getElementById('viewer-row').classList.toggle('hidden', !hasViewer);
+  if (hasViewer) {
+    setViewerRow(activeRowIdx);
+    // Render par, fetch DD and BBA data
+    if (data.deal_info) {
+      renderPar(data.deal_info);
+      fetchDD(data.deal_info, data.results[activeRowIdx], data.board_number);
+      fetchBBA(data.deal_info);
+    } else {
+      document.getElementById('par-section').classList.add('hidden');
+    }
+  }
+
+  document.getElementById('board-summary').innerHTML = `
+    <div class="stat"><div class="stat-value">Board ${data.board_number}</div><div class="stat-label">Board</div></div>
+    <div class="stat"><div class="stat-value">${suitify(data.field_contract || '-')}</div><div class="stat-label">Field Contract</div></div>
+    <div class="stat"><div class="stat-value">${suitify(data.board_type)}</div><div class="stat-label">Board Type</div></div>
+    <div class="stat"><div class="stat-value">${data.results.length}</div><div class="stat-label">Tables</div></div>
+  `;
+
+  document.getElementById('board-thead').innerHTML = `<tr>
+    <th>NS Pair</th><th>EW Pair</th><th>Contract</th>
+    <th class="text-right">NS MP%</th><th>NS Cause</th>
+    <th class="text-right">EW MP%</th><th>EW Cause</th>
+  </tr>`;
+
+  renderBoardRows();
+}
+
+function renderBoardRows() {
+  const data = currentBoardData;
+  document.getElementById('board-tbody').innerHTML = data.results.map((r, idx) => {
+    const dn = r.declarer_name;
+    const fmtP = (fullName, isDeclarer) => {
+      const cls = isDeclarer ? 'declarer-name' : '';
+      return `<a href="javascript:void(0)" class="${cls}" onclick="event.stopPropagation();goToPlayer('${esc(fullName)}')">${abbrev(fullName)}</a>`;
+    };
+    const nsP1 = fmtP(r.ns_player1, r.ns_player1 === dn);
+    const nsP2 = fmtP(r.ns_player2, r.ns_player2 === dn);
+    const ewP1 = fmtP(r.ew_player1, r.ew_player1 === dn);
+    const ewP2 = fmtP(r.ew_player2, r.ew_player2 === dn);
+    const rowCls = idx === activeRowIdx ? 'clickable-row row-highlight' : 'clickable-row';
+    return `<tr class="${rowCls}" onclick="clickBoardRow(${idx})">
+    <td>${nsP1} - ${nsP2}</td>
+    <td>${ewP1} - ${ewP2}</td>
+    <td class="col-contract-score"><span>${fmtContract(r.result_str)}</span><span class="score">${r.ns_score}</span></td>
+    <td class="text-right">${fmtMp(r.ns_analysis.matchpoint_pct)}</td>
+    <td><span class="cause cause-${r.ns_analysis.cause}">${r.ns_analysis.cause}</span> ${r.ns_analysis.notes}</td>
+    <td class="text-right">${fmtMp(r.ew_analysis.matchpoint_pct)}</td>
+    <td><span class="cause cause-${r.ew_analysis.cause}">${r.ew_analysis.cause}</span> ${r.ew_analysis.notes}</td>
+  </tr>`;
+  }).join('');
+}
+
+function clickBoardRow(idx) {
+  activeRowIdx = idx;
+  setViewerRow(idx);
+  renderBoardRows();
+  // Re-render DD table with new contract highlighted
+  if (cachedDDTricks && currentBoardData) {
+    renderDDTable(cachedDDTricks, currentBoardData.results[idx]);
+  }
+}
+
+function setViewerRow(idx) {
+  const r = currentBoardData.results[idx];
+  const viewer = document.getElementById('board-viewer');
+  if (r && r.bbo_url) { viewer.src = r.bbo_url; }
+}
+
+// ==================== DD Table ====================
+
+/** Encode the schema's structured double_dummy ({N: {C,D,H,S,NT}, ...})
+ *  into the 20-char hex string the BSOL endpoint returns and renderDDTable
+ *  consumes (layout: 4 declarers N/S/E/W × 5 strains NT/S/H/D/C, hex digits
+ *  with 'a'-'d' for 10-13). Returns null when the source had no DD data
+ *  for any declarer.  */
+function buildDDStringFromSchema(boardDD) {
+  if (!boardDD) return null;
+  const declarers = ['N', 'S', 'E', 'W'];
+  const strains = ['NT', 'S', 'H', 'D', 'C']; // BSOL order
+  const toHex = n => n == null ? '0' : (n < 10 ? String(n) : String.fromCharCode(97 + n - 10));
+  let out = '';
+  let any = false;
+  for (const d of declarers) {
+    const seat = boardDD[d];
+    for (const s of strains) {
+      const v = seat ? seat[s] : null;
+      if (v != null) any = true;
+      out += toHex(v);
+    }
+  }
+  return any ? out : null;
+}
+
+async function fetchDD(dealInfo, activeResult, boardNumber) {
+  cachedDDTricks = null;
+  const ddEl = document.getElementById('dd-section');
+  ddEl.innerHTML = '<div class="bba-loading">Loading DD analysis...</div>';
+
+  // First try the normalized JSON — both adapters populate per-declarer
+  // DD when the source has it (PBN [DoubleDummyTricks] tag, ACBL Live's
+  // double-dummy block). Avoids hitting BSOL (which rate-limits 429s
+  // after a handful of consecutive board navigations) when we already
+  // have the same data locally. Lazy-load it on first board view if
+  // shadow mode hasn't already cached it.
+  if (!cachedNormalized && boardNumber != null) {
+    try { await loadNormalized(); } catch (e) { /* fall through to BSOL */ }
+  }
+  if (cachedNormalized && boardNumber != null) {
+    const session = pickSession(cachedNormalized, currentSessionIdx);
+    const board = session?.boards.find(b => b.number === boardNumber);
+    const ddString = buildDDStringFromSchema(board?.double_dummy);
+    if (ddString) {
+      cachedDDTricks = ddString;
+      renderDDTable(cachedDDTricks, activeResult);
+      return;
+    }
+  }
+
+  // Fall back to BSOL only when DD isn't in the schema (older PBN files
+  // without the [DoubleDummyTricks] tag).
+  try {
+    const pbn = dealInfo.pbn.replace(/ /g, 'x');
+    const vul = dealInfo.vulnerability === 'Both' ? 'All' : dealInfo.vulnerability;
+    const url = `https://dds.bridgewebs.com/cgi-bin/bsol2/ddummy?request=m&dealstr=${encodeURIComponent(pbn)}&vul=${vul}&club=clubgameanalysis`;
+    const res = await fetch(url);
+    if (!res.ok) { ddEl.innerHTML = '<div class="bba-loading">DD unavailable</div>'; return; }
+    const text = await res.text();
+    const json = JSON.parse(text.trim());
+    if (!json.sess || !json.sess.ddtricks || json.sess.ddtricks.length < 20) {
+      ddEl.innerHTML = '<div class="bba-loading">DD unavailable</div>'; return;
+    }
+    cachedDDTricks = json.sess.ddtricks;
+    renderDDTable(cachedDDTricks, activeResult);
+  } catch (e) {
+    ddEl.innerHTML = '<div class="bba-loading">DD unavailable</div>';
+  }
+}
+
+function parseDDTrick(ch) {
+  if (ch >= '0' && ch <= '9') return parseInt(ch);
+  if (ch >= 'a' && ch <= 'd') return 10 + ch.charCodeAt(0) - 97;
+  if (ch >= 'A' && ch <= 'D') return 10 + ch.charCodeAt(0) - 65;
+  return 0;
+}
+
+/** Render the par contract from PBN data.
+ *  Input: par_contract like "EW 3N+2" (side + bid + result),
+ *         optimum_score like "EW 460".
+ *  May have multiple contracts separated by semicolon for ties. */
+function renderPar(dealInfo) {
+  const el = document.getElementById('par-section');
+  if (!dealInfo.par_contract && !dealInfo.optimum_score) {
+    el.classList.add('hidden');
+    return;
+  }
+  el.classList.remove('hidden');
+
+  // Render each par contract with suit symbols
+  const contracts = (dealInfo.par_contract || '').split(/[;,]/).map(s => s.trim()).filter(Boolean);
+  const renderedContracts = contracts.map(c => {
+    // e.g., "EW 3N+2" → "EW 3NT+2" with suit symbol
+    // e.g., "NS 1S+2" → "NS 1♠+2"
+    // Match: <side> <level><strain><result>
+    const m = c.match(/^(NS|EW)\s+(\d)(NT|[SHDCN])(.*)$/);
+    if (!m) return c;
+    const side = m[1];
+    const level = m[2];
+    const strain = m[3] === 'N' ? 'NT' : m[3];
+    const rest = m[4]; // e.g., "+2", "-1", "X+1"
+    return `${side} ${level}${suitSymbol(strain)}${rest}`;
+  }).join(' / ');
+
+  const optScore = dealInfo.optimum_score || '';
+
+  el.innerHTML = `
+    <h4>Par Contract</h4>
+    <div style="display:flex;justify-content:space-between;gap:0.5rem;font-size:0.9rem;font-weight:500;">
+      <span>${renderedContracts || '-'}</span>
+      <span style="color:var(--text-muted);font-weight:normal;">${optScore}</span>
+    </div>
+  `;
+}
+
+function renderDDTable(ddtricks, activeResult) {
+  // Parse the active (user) contract.
+  // Format: <level><strain>[X|XX]<declarer>[result], e.g. "2HXS+1" or "4SN=".
+  let userSeat = null, userSuitIdx = null;
+  if (activeResult && activeResult.result_str) {
+    const m = activeResult.result_str.match(/^\d(NT|[SHDC])(X{0,2})([NESW])/);
+    if (m) {
+      userSeat = m[3];
+      const strainMap = {C:0, D:1, H:2, S:3, NT:4};
+      userSuitIdx = strainMap[m[1]] ?? null;
+    }
+  }
+
+  // BBA contract (may be null if unavailable)
+  const bba = cachedBBAContract;
+  const hasBBA = bba !== null;
+  const agree = hasBBA && bba.seat === userSeat && bba.suitIdx === userSuitIdx;
+
+  const seats = ['N','S','E','W'];
+  const ddOrder = [4, 3, 2, 1, 0]; // DD order NT,S,H,D,C -> display C,D,H,S,NT
+  const suitHdrs = [
+    '<span style="color:#000">\u2663</span>',
+    '<span style="color:#d00">\u2666</span>',
+    '<span style="color:#d00">\u2665</span>',
+    '<span style="color:#000">\u2660</span>',
+    'NT'
+  ];
+
+  let html = '<h4>Double Dummy</h4><table><thead><tr><th></th>';
+  for (let j = 0; j < 5; j++) html += `<th>${suitHdrs[j]}</th>`;
+  html += '</tr></thead><tbody>';
+  for (let i = 0; i < 4; i++) {
+    html += `<tr><td style="font-weight:700;background:var(--bg);">${seats[i]}</td>`;
+    for (let j = 0; j < 5; j++) {
+      const tricks = parseDDTrick(ddtricks[i * 5 + ddOrder[j]]);
+      const isUser = (seats[i] === userSeat && j === userSuitIdx);
+      const isBBA = hasBBA && (seats[i] === bba.seat && j === bba.suitIdx);
+      let cls = '';
+      if (isUser && isBBA) {
+        cls = 'dd-highlight-green'; // both agree
+      } else if (isUser && !hasBBA) {
+        cls = 'dd-highlight-green'; // no BBA, show user in green
+      } else if (isUser && hasBBA && !agree) {
+        cls = 'dd-highlight-red'; // user differs from BBA
+      } else if (isBBA && !agree) {
+        cls = 'dd-highlight-green'; // BBA's recommendation
+      }
+      html += `<td${cls ? ` class="${cls}"` : ''}>${tricks}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  document.getElementById('dd-section').innerHTML = html;
+}
+
+// ==================== BBA Auction ====================
+async function fetchBBA(dealInfo) {
+  cachedBBAContract = null;
+  const bbaEl = document.getElementById('bba-section');
+  bbaEl.innerHTML = '<div class="bba-loading">Loading BBA auction...</div>';
+  try {
+    const res = await fetch('https://bba.harmonicsystems.com/api/auction/generate', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Client-Version': 'ClubGameAnalysis' },
+      body: JSON.stringify({ deal: { pbn: dealInfo.pbn, dealer: dealInfo.dealer, vulnerability: dealInfo.vulnerability } })
+    });
+    if (!res.ok) { bbaEl.innerHTML = '<div class="bba-loading">BBA unavailable</div>'; return; }
+    const result = await res.json();
+    if (result.success) {
+      renderBBAAuction(result, dealInfo.dealer);
+      // Parse BBA's final contract for DD highlighting
+      cachedBBAContract = parseBBAContract(result.auctionEncoded, dealInfo.dealer);
+      // Re-render DD table with BBA contract info
+      if (cachedDDTricks && currentBoardData) {
+        renderDDTable(cachedDDTricks, currentBoardData.results[activeRowIdx]);
+      }
+    } else {
+      bbaEl.innerHTML = '<div class="bba-loading">BBA unavailable</div>';
+    }
+  } catch (e) {
+    bbaEl.innerHTML = '<div class="bba-loading">BBA unavailable</div>';
+  }
+}
+
+/** Parse BBA's encoded auction to find the final contract's declarer and strain.
+ *  Encoded format: 2-char bids, "--" = pass, "Db" = double, "Rd" = redouble.
+ *  Returns {seat, suitIdx} or null. */
+function parseBBAContract(encoded, dealer) {
+  if (!encoded || !dealer) return null;
+  const calls = [];
+  for (let i = 0; i < encoded.length; i += 2) calls.push(encoded.substring(i, i + 2));
+
+  const strainMap = {C:0, D:1, H:2, S:3, N:4};
+  const seatOrder = ['N','E','S','W'];
+  const dealerIdx = seatOrder.indexOf(dealer);
+
+  let lastBidIdx = -1, lastBid = null;
+  for (let i = calls.length - 1; i >= 0; i--) {
+    if (calls[i] !== '--' && calls[i] !== 'Db' && calls[i] !== 'Rd') {
+      lastBidIdx = i; lastBid = calls[i]; break;
+    }
+  }
+  if (!lastBid) return null;
+
+  const strain = lastBid[1] === 'N' ? 'N' : lastBid[1]; // N for NT
+  const bidderIdx = (dealerIdx + lastBidIdx) % 4;
+  const isNS = bidderIdx % 2 === 0; // N=0, S=2 are even
+
+  // Find first bid in same strain by same side = declarer
+  let declarer = seatOrder[bidderIdx];
+  for (let i = 0; i <= lastBidIdx; i++) {
+    const c = calls[i];
+    if (c !== '--' && c !== 'Db' && c !== 'Rd') {
+      const cStrain = c[1] === 'N' ? 'N' : c[1];
+      if (cStrain === strain) {
+        const callerIdx = (dealerIdx + i) % 4;
+        const callerIsNS = callerIdx % 2 === 0;
+        if (callerIsNS === isNS) { declarer = seatOrder[callerIdx]; break; }
+      }
+    }
+  }
+
+  const suitIdx = strainMap[strain] ?? null;
+  return suitIdx !== null ? { seat: declarer, suitIdx } : null;
+}
+
+function renderBBAAuction(result, dealer) {
+  const colOrder = ['W','N','E','S'];
+  const startCol = colOrder.indexOf(dealer);
+  const bids = result.auction || [];
+  const meanings = result.meanings || [];
+
+  let padded = [];
+  for (let p = 0; p < startCol; p++) padded.push({bid:'', idx:-1});
+  for (let b = 0; b < bids.length; b++) padded.push({bid:bids[b], idx:b});
+
+  let alerts = [];
+  let html = '<h4>BBA Auction</h4>';
+  html += '<table><thead><tr><th>W</th><th>N</th><th>E</th><th>S</th></tr></thead><tbody>';
+  for (let i = 0; i < padded.length; i += 4) {
+    html += '<tr>';
+    for (let j = 0; j < 4; j++) {
+      const c = padded[i+j];
+      if (!c || !c.bid) { html += '<td></td>'; continue; }
+      let sup = '';
+      if (meanings[c.idx] && meanings[c.idx].meaning && c.bid !== 'Pass') {
+        alerts.push({num: alerts.length+1, bid: c.bid, meaning: meanings[c.idx].meaning});
+        sup = `<sup style="color:#d00;font-size:9px;">${alerts.length}</sup>`;
+      }
+      html += `<td>${fmtBid(c.bid)}${sup}</td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  if (alerts.length) {
+    html += '<div style="font-size:0.7rem;margin-top:0.375rem;border-top:1px solid var(--border);padding-top:0.375rem;">';
+    for (const a of alerts) {
+      html += `<div><sup style="color:#d00;">${a.num}</sup> ${fmtBid(a.bid)}: ${fmtMeaning(a.meaning)}</div>`;
+    }
+    html += '</div>';
+  }
+  document.getElementById('bba-section').innerHTML = html;
+}
+
+function fmtBid(bid) {
+  if (!bid) return '';
+  return bid.replace(/S$/, '\u2660').replace(/H$/, '<span style="color:#d00">\u2665</span>')
+    .replace(/D$/, '<span style="color:#d00">\u2666</span>').replace(/C$/, '\u2663');
+}
+
+/** Replace !S !H !D !C tokens with colored suit symbols (used in BBA alert meanings). */
+function fmtMeaning(text) {
+  if (!text) return '';
+  return text
+    .replace(/!S/gi, '<span style="color:#000">\u2660</span>')
+    .replace(/!H/gi, '<span style="color:#d00">\u2665</span>')
+    .replace(/!D/gi, '<span style="color:#d00">\u2666</span>')
+    .replace(/!C/gi, '<span style="color:#000">\u2663</span>');
+}
+
+// ==================== Helpers ====================
+function suitSymbol(s) {
+  switch(s) {
+    case 'S': return '<span class="suit-black">\u2660</span>'; case 'H': return '<span class="suit-red">\u2665</span>';
+    case 'D': return '<span class="suit-red">\u2666</span>'; case 'C': return '<span class="suit-black">\u2663</span>';
+    case 'NT': return 'NT'; default: return s;
+  }
+}
+function suitify(str) {
+  if (!str) return '';
+  str = str.replace(/(\d)(NT)/g, (_, d, s) => d + suitSymbol(s));
+  str = str.replace(/(\d)([SHDC])(?![a-zA-Z])/g, (_, d, s) => d + suitSymbol(s));
+  str = str.replace(/\(([SHDCN]+) vs ([SHDCN]+)\)/g, (_, a, b) => '(' + suitSymbol(a) + ' vs ' + suitSymbol(b) + ')');
+  str = str.replace(/\(([SHDC])\)/g, (_, s) => '(' + suitSymbol(s) + ')');
+  str = str.replace(/\((NT)\)/g, (_, s) => '(' + suitSymbol(s) + ')');
+  return str;
+}
+function fmtContract(str) {
+  if (!str || str === 'Pass') return str || '';
+  const m = str.match(/^(\d)(NT|[SHDC])(.*)$/);
+  if (!m) return str;
+  const full = m[1] + suitSymbol(m[2]) + m[3];
+  return str.includes('-') ? `<span class="contract-down">${full}</span>` : `<span class="contract-made">${full}</span>`;
+}
+function fmtField(str, matched) { return str ? (matched ? '=' : '') + suitify(str) : ''; }
+function fmtMp(pct) {
+  const cls = pct >= 50 ? 'mp-good' : 'mp-bad';
+  const bar = pct >= 60 ? 'var(--good)' : pct >= 40 ? '#eab308' : 'var(--play)';
+  return `<span class="${cls}">${pct.toFixed(1)}%</span> <span class="mp-bar"><span class="mp-fill" style="width:${pct}%;background:${bar}"></span></span>`;
+}
+function esc(s) { return (s || '').replace(/'/g, "\\'").replace(/"/g, '&quot;'); }
+/** Abbreviate a name for table display: "David Bailey" -> "David B." */
+function abbrev(name) {
+  if (!name) return '';
+  const parts = name.split(' ');
+  if (parts.length <= 1) return name;
+  return parts[0] + ' ' + parts.slice(1).map(p => p[0] + '.').join('');
+}
+function showLoading(show) { document.getElementById('loading').classList.toggle('hidden', !show); }
+function showError(msg) { const el = document.getElementById('error'); el.textContent = msg; el.classList.toggle('hidden', !msg); }
+function hideAll() {
+  document.getElementById('player-results').classList.add('hidden');
+  document.getElementById('board-results').classList.add('hidden');
+  document.getElementById('viewer-row').classList.add('hidden');
+  document.getElementById('board-viewer').src = '';
+  currentBoardData = null;
+}
+
+// ==================== History ====================
+const HISTORY_KEY = 'bridge-analysis-history';
+const HISTORY_MAX_EVENTS = 150;
+
+function getHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '{"version":1,"events":[]}'); }
+  catch (e) { return { version: 1, events: [] }; }
+}
+
+function setHistory(h) {
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch (e) {}
+}
+
+/** Convert strat integer (1-based) to letter: 1→A, 2→B, 3→C … */
+function stratLabel(n) {
+  return n != null ? String.fromCharCode(64 + n) : null;
+}
+
+/** Collapse a player's masterpoints_earned array into a single display value:
+ *  total amount + highest-tier color. */
+const MP_COLOR_RANK = { black: 0, silver: 1, red: 2, gold: 3, platinum: 4 };
+function summarizeMpAwards(awards) {
+  if (!awards?.length) return null;
+  const total = awards.reduce((s, a) => s + (a.amount || 0), 0);
+  const top = awards.reduce((best, a) => {
+    const rank = MP_COLOR_RANK[(a.color || '').toLowerCase()] ?? -1;
+    return rank > (MP_COLOR_RANK[(best.color || '').toLowerCase()] ?? -1) ? a : best;
+  }, awards[0]);
+  return { amount: Math.round(total * 100) / 100, color: (top.color || 'black').toLowerCase() };
+}
+
+/** Derive event metadata from lastUpload (normal flow) or cachedNormalized
+ *  (batch flow where lastUpload is null). */
+function deriveEventMeta() {
+  if (lastUpload) return {
+    event_name: lastUpload.event_name || 'Game',
+    event_date: lastUpload.event_date || '',
+    source_url: cachedNormalized?.source_url || null,
+  };
+  const t = cachedNormalized?.tournaments?.[0];
+  const e = t?.events?.[0];
+  return {
+    event_name: e?.name || t?.name || 'Game',
+    event_date: e?.date || cachedNormalized?.fetched_at?.slice(0, 10) || '',
+    source_url: cachedNormalized?.source_url || null,
+  };
+}
+
+function autoSaveTrackedPlayers(game) {
+  const h = getHistory();
+  const tracked = new Set();
+  for (const ev of h.events) {
+    for (const name of Object.keys(ev.players)) tracked.add(name);
+  }
+  if (!tracked.size) return;
+  const inSession = new Set(derivePlayers(game, currentSessionIdx));
+  for (const name of tracked) {
+    if (!inSession.has(name)) continue;
+    const data = jsAnalyzePlayer(game, currentSessionIdx, name);
+    if (data) savePlayerToHistory(name, data);
+  }
+}
+
+function savePlayerToHistory(playerName, data) {
+  const meta = deriveEventMeta();
+  const eventId = `${meta.event_date || 'unknown'}|${meta.event_name}`;
+  const causes = { Good: 0, Lucky: 0, Play: 0, Defense: 0, Auction: 0, Unlucky: 0 };
+  for (const r of data.board_results) {
+    if (r.cause in causes) causes[r.cause]++;
+  }
+  const h = getHistory();
+  let ev = h.events.find(e => e.id === eventId);
+  if (!ev) {
+    ev = {
+      id: eventId,
+      event_name: meta.event_name,
+      event_date: meta.event_date,
+      source_url: meta.source_url,
+      saved_at: new Date().toISOString(),
+      players: {},
+    };
+    h.events.unshift(ev);
+    if (h.events.length > HISTORY_MAX_EVENTS) h.events.length = HISTORY_MAX_EVENTS;
+  }
+  ev.players[playerName] = {
+    boards: data.boards_played,
+    mp: Math.round(data.avg_matchpoint_pct * 10) / 10,
+    strat: data.strat ?? null,
+    mp_award: data.mp_award || null,
+    ...causes,
+  };
+  setHistory(h);
+}
+
+function clearHistory() {
+  if (!confirm('Clear all saved history? This cannot be undone.')) return;
+  localStorage.removeItem(HISTORY_KEY);
+  renderHistory();
+}
+
+function renderHistory() {
+  const h = getHistory();
+  const sel = document.getElementById('history-player-select');
+  const content = document.getElementById('history-content');
+
+  if (!h.events.length) {
+    sel.innerHTML = '';
+    content.innerHTML = '<div class="history-empty">No history saved yet.<br>Events are automatically saved the first time you view a player or board after uploading.</div>';
+    return;
+  }
+
+  // Collect all player names across all events, sorted
+  const playerSet = new Set();
+  for (const ev of h.events) {
+    for (const name of Object.keys(ev.players)) playerSet.add(name);
+  }
+  const allPlayers = [...playerSet].sort();
+
+  // Rebuild select, preserving current selection if valid
+  const prev = sel.value;
+  sel.innerHTML = allPlayers.map(n => `<option value="${esc(n)}">${n}</option>`).join('');
+  if (prev && allPlayers.includes(prev)) sel.value = prev;
+
+  renderHistoryPlayer(sel.value);
+}
+
+function sparklineSvg(points, color) {
+  if (points.length < 2) return '';
+  const W = 480, H = 72, PAD = 8;
+  const minY = 0;
+  const maxY = Math.max(...points, 40);
+  const xs = points.map((_, i) => PAD + i * (W - 2 * PAD) / (points.length - 1));
+  const ys = points.map(v => H - PAD - (v - minY) / (maxY - minY || 1) * (H - 2 * PAD));
+  const polyPts = xs.map((x, i) => `${x.toFixed(1)},${ys[i].toFixed(1)}`).join(' ');
+  const dots = xs.map((x, i) => `<circle cx="${x.toFixed(1)}" cy="${ys[i].toFixed(1)}" r="3.5" fill="${color}"/>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">` +
+    `<polyline points="${polyPts}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round"/>` +
+    dots + '</svg>';
+}
+
+function renderHistoryPlayer(playerName) {
+  const content = document.getElementById('history-content');
+  if (!playerName) { content.innerHTML = ''; return; }
+
+  const h = getHistory();
+  // Events chronological (oldest first) for the chart, reversed for the table
+  const eventsWithPlayer = h.events
+    .filter(e => e.players[playerName])
+    .sort((a, b) => (a.event_date || a.saved_at) < (b.event_date || b.saved_at) ? -1 : 1);
+
+  if (!eventsWithPlayer.length) {
+    content.innerHTML = `<div class="history-empty">No history saved for <strong>${playerName}</strong> yet.</div>`;
+    return;
+  }
+
+  // Error rate sparkline (Play + Defense + Auction as % of boards)
+  const errPts = eventsWithPlayer.map(e => {
+    const p = e.players[playerName];
+    return p.boards > 0 ? ((p.Play + p.Defense + p.Auction) / p.boards * 100) : 0;
+  });
+  const mpPts = eventsWithPlayer.map(e => e.players[playerName].mp);
+
+  const sparkErr = sparklineSvg(errPts, '#dc2626');
+  const sparkMp  = sparklineSvg(mpPts,  '#16a34a');
+
+  const tableRows = [...eventsWithPlayer].reverse().map(e => {
+    const p = e.players[playerName];
+    const errors = p.Play + p.Defense + p.Auction;
+    const errorPct = p.boards > 0 ? (errors / p.boards * 100).toFixed(0) : '-';
+    const mpColor = p.mp >= 50 ? 'mp-good' : 'mp-bad';
+    const eventLink = e.source_url
+      ? `<a href="${e.source_url}#bc-analyze" target="_blank" rel="noopener">${e.event_name}</a>`
+      : e.event_name;
+    const stratCell = p.strat != null ? stratLabel(p.strat) : '—';
+    const mpAwardCell = p.mp_award
+      ? `<span class="mp-award mp-award-${(p.mp_award.color || 'black').toLowerCase()}">${p.mp_award.amount.toFixed(2)}</span>`
+      : '—';
+    return `<tr>
+      <td>${e.event_date || '—'}</td>
+      <td>${eventLink}</td>
+      <td class="text-right">${p.boards}</td>
+      <td class="text-right ${mpColor}">${p.mp.toFixed(1)}%</td>
+      <td class="text-right">${errorPct}%</td>
+      <td class="text-right">${stratCell}</td>
+      <td class="text-right">${mpAwardCell}</td>
+      <td class="text-right"><span class="cause cause-Good">${p.Good}</span></td>
+      <td class="text-right"><span class="cause cause-Lucky">${p.Lucky}</span></td>
+      <td class="text-right"><span class="cause cause-Play">${p.Play}</span></td>
+      <td class="text-right"><span class="cause cause-Defense">${p.Defense}</span></td>
+      <td class="text-right"><span class="cause cause-Auction">${p.Auction}</span></td>
+      <td class="text-right"><span class="cause cause-Unlucky">${p.Unlucky}</span></td>
+    </tr>`;
+  }).join('');
+
+  content.innerHTML = `
+    <p class="history-player-header">${playerName} &mdash; ${eventsWithPlayer.length} event${eventsWithPlayer.length === 1 ? '' : 's'}</p>
+    ${sparkErr ? `<div class="history-sparkline">
+      <h4>Error rate over time (Play + Defense + Auction % of boards played)</h4>
+      ${sparkErr}
+    </div>` : ''}
+    ${sparkMp ? `<div class="history-sparkline">
+      <h4>Matchpoint % over time</h4>
+      ${sparkMp}
+    </div>` : ''}
+    <div class="results-table">
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Event</th><th class="text-right">Boards</th>
+          <th class="text-right">MP%</th><th class="text-right">Error%</th>
+          <th class="text-right">Strat</th><th class="text-right">MPs</th>
+          <th class="text-right">Good</th><th class="text-right">Lucky</th>
+          <th class="text-right">Play</th><th class="text-right">Defense</th>
+          <th class="text-right">Auction</th><th class="text-right">Unlucky</th>
+        </tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>`;
+}
+
+// ==================== /analyze entry point ====================
+//
+// When opened at /analyze, the bridge-data-extension has already pushed
+// a normalized JSON document into sessionStorage under "pending-session"
+// and opened the tab. We pull it out (one-shot read), validate the
+// schema version, POST to /api/upload-normalized, and join the regular
+// post-upload UI flow. If no data is present we show the empty-state
+// card; if it can't be parsed or accepted, we show the error card.
+
+const PENDING_KEY = 'pending-session';
+const BATCH_KEY = 'pending-batch';
+const SUPPORTED_MAJOR = 1;
+
+function isAnalyzePath() {
+  const path = window.location.pathname;
+  return path === '/analyze' || path === '/analyze/';
+}
+
+function showAnalyzeEmpty() {
+  uploadArea.classList.add('hidden');
+  document.getElementById('download-help').classList.add('hidden');
+  const link = document.getElementById('analyze-empty-link');
+  if (link) link.href = '/';
+  document.getElementById('analyze-empty').classList.remove('hidden');
+}
+
+function showAnalyzeError(detail) {
+  uploadArea.classList.add('hidden');
+  document.getElementById('download-help').classList.add('hidden');
+  const link = document.getElementById('analyze-error-link');
+  if (link) link.href = '/';
+  document.getElementById('analyze-error-detail').textContent = detail || '';
+  document.getElementById('analyze-error').classList.remove('hidden');
+}
+
+// ==================== Batch import ====================
+
+let _trackModalResolve = null;
+
+function filterTrackModal(q) {
+  const norm = q.trim().toLowerCase();
+  document.querySelectorAll('#track-modal-players label').forEach(lbl => {
+    lbl.style.display = !norm || lbl.textContent.toLowerCase().includes(norm) ? '' : 'none';
+  });
+}
+
+function setAllTrackModal(checked) {
+  document.querySelectorAll('#track-modal-players input').forEach(cb => {
+    if (cb.closest('label').style.display !== 'none') cb.checked = checked;
+  });
+}
+
+function showTrackModal(players) {
+  return new Promise(resolve => {
+    _trackModalResolve = resolve;
+    const listEl = document.getElementById('track-modal-players');
+    document.getElementById('track-modal-search').value = '';
+    listEl.innerHTML = players.map(name =>
+      `<label><input type="checkbox" value="${esc(name)}"> ${name}</label>`
+    ).join('');
+    document.getElementById('track-modal').classList.remove('hidden');
+
+    document.getElementById('track-modal-start').onclick = () => {
+      const selected = [...listEl.querySelectorAll('input:checked')].map(i => i.value);
+      if (!selected.length) { alert('Please select at least one player.'); return; }
+      document.getElementById('track-modal').classList.add('hidden');
+      resolve(selected);
+    };
+    document.getElementById('track-modal-cancel').onclick = () => {
+      document.getElementById('track-modal').classList.add('hidden');
+      resolve(null);
+    };
+  });
+}
+
+async function runBatch(batchItems) {
+  const total = batchItems.length;
+  const titleEl = document.getElementById('batch-status-title');
+  const detailEl = document.getElementById('batch-status-detail');
+  const barEl = document.getElementById('batch-bar');
+  const setStatus = (title, detail, pct) => {
+    if (titleEl) titleEl.textContent = title;
+    if (detailEl) detailEl.textContent = detail || '';
+    if (barEl) barEl.style.width = `${pct ?? 0}%`;
+  };
+
+  const h = getHistory();
+  const hasTracked = h.events.some(ev => Object.keys(ev.players).length > 0);
+
+  let startIdx = 0;
+
+  if (!hasTracked) {
+    setStatus('Loading first event…', '', 0);
+    sessionId = batchItems[0].session_id;
+    cachedNormalized = null;
+    lastUpload = null;
+    currentSessionIdx = 0;
+    let firstGame;
+    try {
+      firstGame = await getJSON(`${BASE}/api/normalized?session=${sessionId}`);
+      cachedNormalized = firstGame;
+    } catch (e) {
+      setStatus('Error loading first event', e.message);
+      return;
+    }
+    const players = derivePlayers(firstGame, 0);
+    const selected = await showTrackModal(players);
+    if (!selected) {
+      document.getElementById('batch-progress').classList.add('hidden');
+      uploadArea.classList.remove('hidden');
+      document.getElementById('download-help').classList.remove('hidden');
+      return;
+    }
+    for (const name of selected) {
+      const data = jsAnalyzePlayer(firstGame, 0, name);
+      if (data) savePlayerToHistory(name, data);
+    }
+    setStatus('Importing history…', `Saved 1 of ${total}`, Math.round(1 / total * 100));
+    startIdx = 1;
+  }
+
+  let skipped = 0;
+  for (let i = startIdx; i < total; i++) {
+    setStatus('Importing history…', `Saving event ${i + 1} of ${total}…`, Math.round((i + 1) / total * 100));
+    sessionId = batchItems[i].session_id;
+    cachedNormalized = null;
+    lastUpload = null;
+    currentSessionIdx = 0;
+    try {
+      await loadNormalized();
+    } catch (e) {
+      skipped++;
+    }
+  }
+
+  const saved = total - skipped;
+  setStatus('Done!', `${saved} event${saved === 1 ? '' : 's'} saved to history${skipped ? ` (${skipped} skipped)` : ''}.`, 100);
+  await new Promise(r => setTimeout(r, 1400));
+
+  document.getElementById('batch-progress').classList.add('hidden');
+  // Set up minimal event-header state so the History tab is navigable
+  cachedPlayers = cachedNormalized ? derivePlayers(cachedNormalized, 0) : [];
+  cachedBoards = cachedNormalized ? deriveBoards(cachedNormalized, 0) : [];
+  document.getElementById('event-name').textContent = 'Batch Import';
+  document.getElementById('event-date').textContent = `${saved} events`;
+  document.getElementById('event-header').classList.remove('hidden');
+  switchView('history');
+}
+
+async function bootstrapAnalyze() {
+  // Poll for whichever key the extension content script writes first.
+  // Both single-game (pending-session) and batch (pending-batch) paths
+  // go through the same 2 s window so content-script timing doesn't matter.
+  showLoading(true);
+  let raw = null;
+  let batchRaw = null;
+  let earlyResolve;
+  const earlyPromise = new Promise(r => { earlyResolve = r; });
+  const onHandoff = () => earlyResolve();
+  window.addEventListener('bridge-classroom-handoff', onHandoff, { once: true });
+
+  try {
+    for (let attempt = 0; attempt < 40; attempt++) { // 40 × 50ms = 2s
+      try { raw = sessionStorage.getItem(PENDING_KEY); } catch (e) {}
+      if (raw) break;
+      try { batchRaw = sessionStorage.getItem(BATCH_KEY); } catch (e) {}
+      if (batchRaw) break;
+      await Promise.race([
+        new Promise(r => setTimeout(r, 50)),
+        earlyPromise,
+      ]);
+    }
+  } finally {
+    window.removeEventListener('bridge-classroom-handoff', onHandoff);
+  }
+
+  // Batch mode — one-shot consume then hand off to runBatch.
+  if (batchRaw) {
+    showLoading(false);
+    try { sessionStorage.removeItem(BATCH_KEY); } catch (e) {}
+    let batch;
+    try { batch = JSON.parse(batchRaw); } catch (e) {
+      showAnalyzeError('Batch data was not valid JSON: ' + e.message); return;
+    }
+    // Content script writes { items, total, errors }; accept plain array too.
+    const batchItems = Array.isArray(batch) ? batch : batch?.items;
+    if (!Array.isArray(batchItems) || !batchItems.length) { showAnalyzeEmpty(); return; }
+    uploadArea.classList.add('hidden');
+    document.getElementById('download-help').classList.add('hidden');
+    document.getElementById('batch-progress').classList.remove('hidden');
+    runBatch(batchItems);
+    return;
+  }
+
+  // One-shot consume for single-game path.
+  try {
+    if (raw) sessionStorage.removeItem(PENDING_KEY);
+  } catch (e) {
+    showLoading(false);
+    showAnalyzeError('Could not read sessionStorage: ' + e.message);
+    return;
+  }
+
+  if (!raw) {
+    showLoading(false);
+    showAnalyzeEmpty();
+    return;
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (e) {
+    showAnalyzeError('Game data was not valid JSON: ' + e.message);
+    return;
+  }
+
+  // Quick client-side version check so unsupported schemas don't even
+  // hit the server. The server enforces the same rule.
+  const ver = (parsed && parsed.schema_version) || '';
+  const major = parseInt(String(ver).split('.')[0], 10);
+  if (!Number.isFinite(major)) {
+    showAnalyzeError(`Game data is missing a valid schema_version (got "${ver}").`);
+    return;
+  }
+  if (major !== SUPPORTED_MAJOR) {
+    showAnalyzeError(
+      `Schema version ${ver} is not supported by this analyzer ` +
+      `(supports ${SUPPORTED_MAJOR}.x). Update Bridge Classroom to a newer build.`
+    );
+    return;
+  }
+
+  showLoading(true); showError('');
+  try {
+    const res = await fetch(`${BASE}/api/upload-normalized`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: raw,
+    });
+    if (!res.ok) {
+      const msg = await res.text();
+      showAnalyzeError(`Server rejected the data: ${msg}`);
+      return;
+    }
+    const data = await res.json();
+    sessionId = data.session_id;
+    mergeNamesToStorage(data.player_acbl);
+    applyUploadResponse(data, { hasPbn: true });
+  } catch (e) {
+    showAnalyzeError(`Network error: ${e.message}`);
+  } finally {
+    showLoading(false);
+  }
+}
+
+if (isAnalyzePath()) {
+  bootstrapAnalyze();
+}
+</script>
+</body>
+</html>
