@@ -2919,6 +2919,11 @@ function _buildHandviewerUrl(board, result) {
   return `https://www.bridgebase.com/tools/handviewer.html?lin=${encodeURIComponent(lin)}`;
 }
 
+function _linHasAuction(url) {
+  try { return (new URL(url).searchParams.get('lin') ?? '').includes('mb|'); }
+  catch { return false; }
+}
+
 function enrichHandviewerUrls(normalized) {
   for (const t of normalized.tournaments ?? []) {
     for (const ev of t.events ?? []) {
@@ -2926,6 +2931,10 @@ function enrichHandviewerUrls(normalized) {
         for (const b of s.boards ?? []) {
           if (!b.deal || !b.dealer) continue;
           for (const r of b.results ?? []) {
+            // Keep existing URL when it already carries real auction data
+            // (e.g. BBO source). Only build synthetic URL for ACBL data
+            // where the auction is unknown.
+            if (_linHasAuction(r.handviewer_url)) continue;
             const url = _buildHandviewerUrl(b, r);
             if (url) r.handviewer_url = url;
           }
