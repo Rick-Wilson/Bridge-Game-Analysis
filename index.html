@@ -2757,8 +2757,10 @@ function renderHistoryPlayer(playerName) {
     const reExtractLink = e.source_url
       ? ` <a href="${e.source_url}#bc-analyze" target="_blank" rel="noopener" title="Re-extract with extension" style="color:var(--text-muted);font-size:0.85em;text-decoration:none">↗</a>`
       : '';
+    const safeId  = JSON.stringify(e.id).replace(/"/g, '&quot;');
+    const safeUrl = JSON.stringify(e.source_url || null).replace(/"/g, '&quot;');
     const eventLink = e.source_url
-      ? `<span style="cursor:pointer;color:var(--primary);text-decoration:underline" title="${isCached ? 'Load from local cache' : 'Open source page for extraction'}" onclick="loadHistoryEvent(${JSON.stringify(e.id)},${JSON.stringify(e.source_url||null)})">${e.event_name}</span>${cacheIcon}${reExtractLink}`
+      ? `<span style="cursor:pointer;color:var(--primary);text-decoration:underline" title="${isCached ? 'Load from local cache' : 'Open source page for extraction'}" onclick="loadHistoryEvent(${safeId},${safeUrl})">${e.event_name}</span>${cacheIcon}${reExtractLink}`
       : e.event_name;
     const stratCell = p.strat != null ? stratLabel(p.strat) : '—';
     const mpAwardCell = p.mp_award
