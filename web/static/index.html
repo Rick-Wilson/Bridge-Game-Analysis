@@ -364,6 +364,7 @@ async function loadNormalized() {
   if (cachedNormalized) return cachedNormalized;
   if (!sessionId) throw new Error('no active session');
   cachedNormalized = await getJSON(`${BASE}/api/normalized?session=${sessionId}`);
+  try { autoSaveTrackedPlayers(cachedNormalized); } catch (e) {}
   return cachedNormalized;
 }
 
@@ -2406,6 +2407,22 @@ function getHistory() {
 
 function setHistory(h) {
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch (e) {}
+}
+
+function autoSaveTrackedPlayers(game) {
+  const h = getHistory();
+  if (!h.events.length) return;
+  const tracked = new Set();
+  for (const ev of h.events) {
+    for (const name of Object.keys(ev.players)) tracked.add(name);
+  }
+  if (!tracked.size) return;
+  const inSession = new Set(derivePlayers(game, currentSessionIdx));
+  for (const name of tracked) {
+    if (!inSession.has(name)) continue;
+    const data = jsAnalyzePlayer(game, currentSessionIdx, name);
+    if (data) savePlayerToHistory(name, data);
+  }
 }
 
 function savePlayerToHistory(playerName, data) {
