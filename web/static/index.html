@@ -2630,7 +2630,7 @@ function renderHistoryPlayer(playerName) {
     const errorPct = p.boards > 0 ? (errors / p.boards * 100).toFixed(0) : '-';
     const mpColor = p.mp >= 50 ? 'mp-good' : 'mp-bad';
     const eventLink = e.source_url
-      ? `<a href="${e.source_url}" target="_blank" rel="noopener">${e.event_name}</a>`
+      ? `<a href="${e.source_url}#bc-analyze" target="_blank" rel="noopener">${e.event_name}</a>`
       : e.event_name;
     const stratCell = p.strat != null ? stratLabel(p.strat) : '—';
     const mpAwardCell = p.mp_award
