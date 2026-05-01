@@ -2865,11 +2865,13 @@ async function bootstrapAnalyze() {
     try { batch = JSON.parse(batchRaw); } catch (e) {
       showAnalyzeError('Batch data was not valid JSON: ' + e.message); return;
     }
-    if (!Array.isArray(batch) || !batch.length) { showAnalyzeEmpty(); return; }
+    // Content script writes { items, total, errors }; accept plain array too.
+    const batchItems = Array.isArray(batch) ? batch : batch?.items;
+    if (!Array.isArray(batchItems) || !batchItems.length) { showAnalyzeEmpty(); return; }
     uploadArea.classList.add('hidden');
     document.getElementById('download-help').classList.add('hidden');
     document.getElementById('batch-progress').classList.remove('hidden');
-    runBatch(batch);
+    runBatch(batchItems);
     return;
   }
 
