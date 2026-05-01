@@ -2709,14 +2709,126 @@ function renderHistoryPlayer(playerName) {
     </div>`;
 }
 
+// ==================== Client-side tricks enrichment ====================
+// Port of Rust enrich_tricks in Bridge-Event-Parser-Service/src/builder.rs.
+// Fills in null trick counts from score + contract + vulnerability so the
+// JS analyzer has full data without a round-trip to the backend.
+
+function isVulnerableForDeclarer(vulnStr, declarer) {
+  const v = (vulnStr || 'None').toUpperCase();
+  if (v === 'ALL' || v === 'BOTH') return true;
+  if (v === 'NONE' || v === '-') return false;
+  return (declarer === 'N' || declarer === 'S') ? v === 'NS' : v === 'EW';
+}
+
+function bridgeContractScore(level, strain, doubled, vulnerable, rel) {
+  if (rel < 0) {
+    const n = -rel;
+    if (doubled === 0) return vulnerable ? -100 * n : -50 * n;
+    const factor = doubled === 2 ? 2 : 1;
+    if (vulnerable) return -factor * (200 + 300 * (n - 1));
+    const p = n === 1 ? 100 : n <= 3 ? 100 + 200 * (n - 1) : 500 + 300 * (n - 3);
+    return -factor * p;
+  }
+  const trickPts = (strain === 'C' || strain === 'D') ? 20 : 30;
+  const df = doubled === 2 ? 4 : doubled === 1 ? 2 : 1;
+  const base = (trickPts * level + (strain === 'NT' ? 10 : 0)) * df;
+  let bonus = base >= 100 ? (vulnerable ? 500 : 300) : 50;
+  if (level === 6) bonus += vulnerable ? 750 : 500;
+  else if (level === 7) bonus += vulnerable ? 1500 : 1000;
+  if (doubled === 1) bonus += 50;
+  else if (doubled === 2) bonus += 100;
+  const ot = rel > 0
+    ? (doubled === 0 ? trickPts * rel : rel * (vulnerable ? 200 : 100) * (doubled === 2 ? 2 : 1))
+    : 0;
+  return base + bonus + ot;
+}
+
+function enrichTricks(normalized) {
+  for (const t of normalized.tournaments ?? []) {
+    for (const ev of t.events ?? []) {
+      for (const s of ev.sessions ?? []) {
+        for (const b of s.boards ?? []) {
+          const vuln = b.vulnerability ?? 'None';
+          for (const r of b.results ?? []) {
+            if (r.tricks != null || !r.contract || r.contract === 'PASS') continue;
+            const m = r.contract.match(/^(\d)(NT|[CDHS])(X{0,2})$/);
+            if (!m || !r.declarer || r.score == null) continue;
+            const [, lvl, strain, dbl] = m;
+            const level = parseInt(lvl), doubled = dbl.length;
+            const vul = isVulnerableForDeclarer(vuln, r.declarer);
+            const rawTarget = (r.declarer === 'N' || r.declarer === 'S') ? r.score : -r.score;
+            for (let rel = -13; rel <= 7; rel++) {
+              if (bridgeContractScore(level, strain, doubled, vul, rel) === rawTarget) {
+                const tricks = level + 6 + rel;
+                if (tricks >= 0 && tricks <= 13) r.tricks = tricks;
+                break;
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+/** Build an UploadResponse-shaped object from raw normalized JSON so the
+ *  extension path can call applyUploadResponse without a server round-trip. */
+function deriveUploadResponse(normalized) {
+  const sessions = [];
+  let idx = 0;
+  for (const t of normalized.tournaments ?? []) {
+    for (const ev of t.events ?? []) {
+      const multi = (ev.sessions ?? []).length > 1;
+      for (const s of ev.sessions ?? []) {
+        const parts = [ev.name || t.name, ev.date].filter(Boolean);
+        if (multi) parts.push(`Session ${s.session_number ?? idx + 1}`);
+        sessions.push({
+          session_idx: idx,
+          label: parts.join(' — ') || `Session ${idx + 1}`,
+          board_count: new Set(s.boards.map(b => b.number)).size,
+          result_count: s.boards.reduce((n, b) => n + b.results.length, 0),
+        });
+        idx++;
+      }
+    }
+  }
+  const firstT = normalized.tournaments?.[0];
+  const firstE = firstT?.events?.[0];
+  const player_acbl = {};
+  const s0 = pickSession(normalized, 0);
+  for (const b of s0?.boards ?? []) {
+    for (const r of b.results ?? []) {
+      for (const pair of [r.ns_pair, r.ew_pair]) {
+        for (const p of pair?.players ?? []) {
+          if (p.acbl_id && p.name) {
+            const dn = displayName(p.name);
+            if (dn && !dn.startsWith('Player ')) player_acbl[dn] = p.acbl_id;
+          }
+        }
+      }
+    }
+  }
+  return {
+    normalized,
+    players: derivePlayers(normalized, 0),
+    boards: deriveBoards(normalized, 0),
+    sessions,
+    event_name: firstE?.name || firstT?.name || '',
+    event_date: firstE?.date || '',
+    player_acbl,
+    has_pbn: true,
+    session_id: null,
+  };
+}
+
 // ==================== /analyze entry point ====================
 //
 // When opened at /analyze, the bridge-data-extension has already pushed
 // a normalized JSON document into sessionStorage under "pending-session"
 // and opened the tab. We pull it out (one-shot read), validate the
-// schema version, POST to /api/upload-normalized, and join the regular
-// post-upload UI flow. If no data is present we show the empty-state
-// card; if it can't be parsed or accepted, we show the error card.
+// schema version, and process it entirely client-side (enrichTricks +
+// deriveUploadResponse). No server round-trip needed for extension data.
 
 const PENDING_KEY = 'pending-session';
 const BATCH_KEY = 'pending-batch';
@@ -2942,24 +3054,14 @@ async function bootstrapAnalyze() {
     return;
   }
 
-  showLoading(true); showError('');
   try {
-    const res = await fetch(`${BASE}/api/upload-normalized`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: raw,
-    });
-    if (!res.ok) {
-      const msg = await res.text();
-      showAnalyzeError(`Server rejected the data: ${msg}`);
-      return;
-    }
-    const data = await res.json();
+    enrichTricks(parsed);
+    const data = deriveUploadResponse(parsed);
     sessionId = data.session_id;
     mergeNamesToStorage(data.player_acbl);
     applyUploadResponse(data, { hasPbn: true });
   } catch (e) {
-    showAnalyzeError(`Network error: ${e.message}`);
+    showAnalyzeError(`Failed to process game data: ${e.message}`);
   } finally {
     showLoading(false);
   }
