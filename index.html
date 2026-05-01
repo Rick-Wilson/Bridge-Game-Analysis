@@ -2572,6 +2572,8 @@ function eventCacheKeySet() {
 }
 
 async function loadHistoryEvent(eventId, sourceUrl) {
+  const focusPlayer = document.getElementById('history-player-select')?.value || null;
+
   // Check synchronously first — window.open must happen before any await
   // or the browser treats it as an unprompted popup and blocks it.
   if (!eventCacheKeySet().has(eventId)) {
@@ -2590,7 +2592,11 @@ async function loadHistoryEvent(eventId, sourceUrl) {
   const data = deriveUploadResponse(normalized);
   mergeNamesToStorage(data.player_acbl);
   applyUploadResponse(data, { hasPbn: true });
-  switchView('players');
+  if (focusPlayer && data.players.includes(focusPlayer)) {
+    goToPlayer(focusPlayer);
+  } else {
+    switchView('players');
+  }
 }
 
 /** Convert strat integer (1-based) to letter: 1→A, 2→B, 3→C … */
