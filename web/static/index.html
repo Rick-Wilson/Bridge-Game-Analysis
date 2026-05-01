@@ -121,6 +121,17 @@ tr.clickable-row:hover td { background: #e0e7ff; }
 #error { color: var(--play); padding: 0.75rem; text-align: center; }
 .pbn-notice { background: #fef3c7; border: 1px solid #f59e0b; border-radius: var(--radius); padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
 
+/* History view */
+.history-controls { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.875rem; }
+.history-controls label { font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
+.history-controls select { font-size: 0.85rem; padding: 0.25rem 0.5rem; border: 1px solid var(--border); border-radius: var(--radius); background: var(--surface); }
+.history-sparkline { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 0.75rem 1rem; margin-bottom: 0.875rem; }
+.history-sparkline h4 { font-size: 0.75rem; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 0.5rem; }
+.history-sparkline svg { display: block; width: 100%; max-width: 480px; }
+.history-empty { color: var(--text-muted); font-size: 0.875rem; padding: 2rem; text-align: center; }
+.history-player-header { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; }
+.cause-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; margin-right: 2px; }
+
 @media (max-width: 640px) {
   .container { padding: 0.5rem; }
   .summary { grid-template-columns: repeat(2, 1fr); }
@@ -212,6 +223,7 @@ tr.clickable-row:hover td { background: #e0e7ff; }
     <div style="display:flex;gap:0.375rem;align-items:center;">
       <button class="btn btn-sm btn-outline active" id="tab-players" onclick="switchView('players')">Players</button>
       <button class="btn btn-sm btn-outline" id="tab-boards" onclick="switchView('boards')">Boards</button>
+      <button class="btn btn-sm btn-outline" id="tab-history" onclick="switchView('history')">History</button>
       <button class="btn btn-sm" id="save-json-btn" style="margin-left:0.5rem;" title="Download the normalized JSON for this session">Save JSON</button>
       <button class="btn btn-sm" id="new-file-btn" style="margin-left:0.5rem;">New File</button>
     </div>
@@ -259,6 +271,16 @@ tr.clickable-row:hover td { background: #e0e7ff; }
     </div>
   </div>
 
+  <!-- History view -->
+  <div id="history-view" class="hidden">
+    <div class="history-controls">
+      <label for="history-player-select">Player:</label>
+      <select id="history-player-select" onchange="renderHistoryPlayer(this.value)"></select>
+      <button class="btn btn-sm btn-outline" id="history-clear-btn" onclick="clearHistory()">Clear History</button>
+    </div>
+    <div id="history-content"></div>
+  </div>
+
   <div class="footer">
     <div class="footer-links">
       <a class="footer-link" href="https://github.com/Rick-Wilson/Bridge-Classroom">
@@ -292,6 +314,7 @@ let currentBoard = null;
 let currentPlayerName = null; // Track for row highlighting in board view
 let currentSessionIdx = 0;     // 0 = first session; only matters when many
 let cachedSessions = [];       // [{ session_idx, label, board_count, result_count }]
+let historySavedForSession = false;
 
 // ==================== JS Analysis Engine — Phase 0 (parity scaffold) ====================
 //
@@ -342,6 +365,7 @@ async function loadNormalized() {
   if (cachedNormalized) return cachedNormalized;
   if (!sessionId) throw new Error('no active session');
   cachedNormalized = await getJSON(`${BASE}/api/normalized?session=${sessionId}`);
+  try { autoSaveHistory(cachedNormalized); } catch (e) {}
   return cachedNormalized;
 }
 
@@ -1466,6 +1490,7 @@ function resetSessionState() {
   currentBoard = null;
   currentPlayerName = null;
   cachedNormalized = null;
+  historySavedForSession = false;
 }
 
 /** Fetch + JSON wrapper that throws the response body text (not a JSON
@@ -1784,12 +1809,20 @@ document.getElementById('new-file-btn').addEventListener('click', () => {
 function switchView(view) {
   document.getElementById('tab-players').classList.toggle('active', view === 'players');
   document.getElementById('tab-boards').classList.toggle('active', view === 'boards');
+  document.getElementById('tab-history').classList.toggle('active', view === 'history');
   hideAll();
   if (view === 'players') {
     document.getElementById('board-grid').classList.add('hidden');
+    document.getElementById('history-view').classList.add('hidden');
     showPlayerGrid();
+  } else if (view === 'history') {
+    document.getElementById('player-grid').classList.add('hidden');
+    document.getElementById('board-grid').classList.add('hidden');
+    document.getElementById('history-view').classList.remove('hidden');
+    renderHistory();
   } else {
     document.getElementById('player-grid').classList.add('hidden');
+    document.getElementById('history-view').classList.add('hidden');
     showBoardGrid();
     // Default to first board if none is selected yet
     if (!currentBoard && cachedBoards.length) {
@@ -2362,6 +2395,175 @@ function hideAll() {
   document.getElementById('viewer-row').classList.add('hidden');
   document.getElementById('board-viewer').src = '';
   currentBoardData = null;
+}
+
+// ==================== History ====================
+const HISTORY_KEY = 'bridge-analysis-history';
+const HISTORY_MAX_EVENTS = 150;
+
+function getHistory() {
+  try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '{"version":1,"events":[]}'); }
+  catch (e) { return { version: 1, events: [] }; }
+}
+
+function setHistory(h) {
+  try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch (e) {}
+}
+
+function computeEventRollup(game, sessionIdx, meta) {
+  const players = derivePlayers(game, sessionIdx);
+  const playerRollups = {};
+  for (const name of players) {
+    const data = jsAnalyzePlayer(game, sessionIdx, name);
+    if (!data) continue;
+    const causes = { Good: 0, Lucky: 0, Play: 0, Defense: 0, Auction: 0, Unlucky: 0 };
+    for (const r of data.board_results) {
+      if (r.cause in causes) causes[r.cause]++;
+    }
+    playerRollups[name] = {
+      boards: data.boards_played,
+      mp: Math.round(data.avg_matchpoint_pct * 10) / 10,
+      ...causes,
+    };
+  }
+  return {
+    id: `${meta.event_date || 'unknown'}|${meta.event_name || 'Game'}`,
+    event_name: meta.event_name || 'Game',
+    event_date: meta.event_date || '',
+    saved_at: new Date().toISOString(),
+    players: playerRollups,
+  };
+}
+
+function autoSaveHistory(game) {
+  if (historySavedForSession || !lastUpload) return;
+  const rollup = computeEventRollup(game, currentSessionIdx, {
+    event_name: lastUpload.event_name,
+    event_date: lastUpload.event_date,
+  });
+  if (!rollup) return;
+  const h = getHistory();
+  const idx = h.events.findIndex(e => e.id === rollup.id);
+  if (idx >= 0) h.events[idx] = rollup;
+  else h.events.unshift(rollup);
+  if (h.events.length > HISTORY_MAX_EVENTS) h.events.length = HISTORY_MAX_EVENTS;
+  setHistory(h);
+  historySavedForSession = true;
+}
+
+function clearHistory() {
+  if (!confirm('Clear all saved history? This cannot be undone.')) return;
+  localStorage.removeItem(HISTORY_KEY);
+  renderHistory();
+}
+
+function renderHistory() {
+  const h = getHistory();
+  const sel = document.getElementById('history-player-select');
+  const content = document.getElementById('history-content');
+
+  if (!h.events.length) {
+    sel.innerHTML = '';
+    content.innerHTML = '<div class="history-empty">No history saved yet.<br>Events are automatically saved the first time you view a player or board after uploading.</div>';
+    return;
+  }
+
+  // Collect all player names across all events, sorted
+  const playerSet = new Set();
+  for (const ev of h.events) {
+    for (const name of Object.keys(ev.players)) playerSet.add(name);
+  }
+  const allPlayers = [...playerSet].sort();
+
+  // Rebuild select, preserving current selection if valid
+  const prev = sel.value;
+  sel.innerHTML = allPlayers.map(n => `<option value="${esc(n)}">${n}</option>`).join('');
+  if (prev && allPlayers.includes(prev)) sel.value = prev;
+
+  renderHistoryPlayer(sel.value);
+}
+
+function sparklineSvg(points, color) {
+  if (points.length < 2) return '';
+  const W = 480, H = 72, PAD = 8;
+  const minY = 0;
+  const maxY = Math.max(...points, 40);
+  const xs = points.map((_, i) => PAD + i * (W - 2 * PAD) / (points.length - 1));
+  const ys = points.map(v => H - PAD - (v - minY) / (maxY - minY || 1) * (H - 2 * PAD));
+  const polyPts = xs.map((x, i) => `${x.toFixed(1)},${ys[i].toFixed(1)}`).join(' ');
+  const dots = xs.map((x, i) => `<circle cx="${x.toFixed(1)}" cy="${ys[i].toFixed(1)}" r="3.5" fill="${color}"/>`).join('');
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">` +
+    `<polyline points="${polyPts}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round"/>` +
+    dots + '</svg>';
+}
+
+function renderHistoryPlayer(playerName) {
+  const content = document.getElementById('history-content');
+  if (!playerName) { content.innerHTML = ''; return; }
+
+  const h = getHistory();
+  // Events chronological (oldest first) for the chart, reversed for the table
+  const eventsWithPlayer = h.events
+    .filter(e => e.players[playerName])
+    .sort((a, b) => (a.event_date || a.saved_at) < (b.event_date || b.saved_at) ? -1 : 1);
+
+  if (!eventsWithPlayer.length) {
+    content.innerHTML = `<div class="history-empty">No history saved for <strong>${playerName}</strong> yet.</div>`;
+    return;
+  }
+
+  // Error rate sparkline (Play + Defense + Auction as % of boards)
+  const errPts = eventsWithPlayer.map(e => {
+    const p = e.players[playerName];
+    return p.boards > 0 ? ((p.Play + p.Defense + p.Auction) / p.boards * 100) : 0;
+  });
+  const mpPts = eventsWithPlayer.map(e => e.players[playerName].mp);
+
+  const sparkErr = sparklineSvg(errPts, '#dc2626');
+  const sparkMp  = sparklineSvg(mpPts,  '#16a34a');
+
+  const tableRows = [...eventsWithPlayer].reverse().map(e => {
+    const p = e.players[playerName];
+    const errors = p.Play + p.Defense + p.Auction;
+    const errorPct = p.boards > 0 ? (errors / p.boards * 100).toFixed(0) : '-';
+    const mpColor = p.mp >= 50 ? 'mp-good' : 'mp-bad';
+    return `<tr>
+      <td>${e.event_date || '—'}</td>
+      <td>${e.event_name}</td>
+      <td class="text-right">${p.boards}</td>
+      <td class="text-right ${mpColor}">${p.mp.toFixed(1)}%</td>
+      <td class="text-right">${errorPct}%</td>
+      <td class="text-right"><span class="cause cause-Good">${p.Good}</span></td>
+      <td class="text-right"><span class="cause cause-Lucky">${p.Lucky}</span></td>
+      <td class="text-right"><span class="cause cause-Play">${p.Play}</span></td>
+      <td class="text-right"><span class="cause cause-Defense">${p.Defense}</span></td>
+      <td class="text-right"><span class="cause cause-Auction">${p.Auction}</span></td>
+      <td class="text-right"><span class="cause cause-Unlucky">${p.Unlucky}</span></td>
+    </tr>`;
+  }).join('');
+
+  content.innerHTML = `
+    <p class="history-player-header">${playerName} &mdash; ${eventsWithPlayer.length} event${eventsWithPlayer.length === 1 ? '' : 's'}</p>
+    ${sparkErr ? `<div class="history-sparkline">
+      <h4>Error rate over time (Play + Defense + Auction % of boards played)</h4>
+      ${sparkErr}
+    </div>` : ''}
+    ${sparkMp ? `<div class="history-sparkline">
+      <h4>Matchpoint % over time</h4>
+      ${sparkMp}
+    </div>` : ''}
+    <div class="results-table">
+      <table>
+        <thead><tr>
+          <th>Date</th><th>Event</th><th class="text-right">Boards</th>
+          <th class="text-right">MP%</th><th class="text-right">Error%</th>
+          <th class="text-right">Good</th><th class="text-right">Lucky</th>
+          <th class="text-right">Play</th><th class="text-right">Defense</th>
+          <th class="text-right">Auction</th><th class="text-right">Unlucky</th>
+        </tr></thead>
+        <tbody>${tableRows}</tbody>
+      </table>
+    </div>`;
 }
 
 // ==================== /analyze entry point ====================
