@@ -314,7 +314,6 @@ let currentBoard = null;
 let currentPlayerName = null; // Track for row highlighting in board view
 let currentSessionIdx = 0;     // 0 = first session; only matters when many
 let cachedSessions = [];       // [{ session_idx, label, board_count, result_count }]
-let historySavedForSession = false;
 
 // ==================== JS Analysis Engine — Phase 0 (parity scaffold) ====================
 //
@@ -365,7 +364,6 @@ async function loadNormalized() {
   if (cachedNormalized) return cachedNormalized;
   if (!sessionId) throw new Error('no active session');
   cachedNormalized = await getJSON(`${BASE}/api/normalized?session=${sessionId}`);
-  try { autoSaveHistory(cachedNormalized); } catch (e) {}
   return cachedNormalized;
 }
 
@@ -1490,7 +1488,6 @@ function resetSessionState() {
   currentBoard = null;
   currentPlayerName = null;
   cachedNormalized = null;
-  historySavedForSession = false;
 }
 
 /** Fetch + JSON wrapper that throws the response body text (not a JSON
@@ -1860,6 +1857,7 @@ async function selectPlayer(btn, name) {
     const game = await loadNormalized();
     const data = jsAnalyzePlayer(game, currentSessionIdx, name);
     if (!data) throw new Error(`Player '${name}' not found`);
+    try { savePlayerToHistory(name, data); } catch (e) {}
     renderPlayer(data);
     // Hide the player grid once results show
     document.getElementById('player-grid').classList.add('hidden');
@@ -2410,45 +2408,32 @@ function setHistory(h) {
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch (e) {}
 }
 
-function computeEventRollup(game, sessionIdx, meta) {
-  const players = derivePlayers(game, sessionIdx);
-  const playerRollups = {};
-  for (const name of players) {
-    const data = jsAnalyzePlayer(game, sessionIdx, name);
-    if (!data) continue;
-    const causes = { Good: 0, Lucky: 0, Play: 0, Defense: 0, Auction: 0, Unlucky: 0 };
-    for (const r of data.board_results) {
-      if (r.cause in causes) causes[r.cause]++;
-    }
-    playerRollups[name] = {
-      boards: data.boards_played,
-      mp: Math.round(data.avg_matchpoint_pct * 10) / 10,
-      ...causes,
-    };
+function savePlayerToHistory(playerName, data) {
+  if (!lastUpload) return;
+  const causes = { Good: 0, Lucky: 0, Play: 0, Defense: 0, Auction: 0, Unlucky: 0 };
+  for (const r of data.board_results) {
+    if (r.cause in causes) causes[r.cause]++;
   }
-  return {
-    id: `${meta.event_date || 'unknown'}|${meta.event_name || 'Game'}`,
-    event_name: meta.event_name || 'Game',
-    event_date: meta.event_date || '',
-    saved_at: new Date().toISOString(),
-    players: playerRollups,
-  };
-}
-
-function autoSaveHistory(game) {
-  if (historySavedForSession || !lastUpload) return;
-  const rollup = computeEventRollup(game, currentSessionIdx, {
-    event_name: lastUpload.event_name,
-    event_date: lastUpload.event_date,
-  });
-  if (!rollup) return;
+  const eventId = `${lastUpload.event_date || 'unknown'}|${lastUpload.event_name || 'Game'}`;
   const h = getHistory();
-  const idx = h.events.findIndex(e => e.id === rollup.id);
-  if (idx >= 0) h.events[idx] = rollup;
-  else h.events.unshift(rollup);
-  if (h.events.length > HISTORY_MAX_EVENTS) h.events.length = HISTORY_MAX_EVENTS;
+  let ev = h.events.find(e => e.id === eventId);
+  if (!ev) {
+    ev = {
+      id: eventId,
+      event_name: lastUpload.event_name || 'Game',
+      event_date: lastUpload.event_date || '',
+      saved_at: new Date().toISOString(),
+      players: {},
+    };
+    h.events.unshift(ev);
+    if (h.events.length > HISTORY_MAX_EVENTS) h.events.length = HISTORY_MAX_EVENTS;
+  }
+  ev.players[playerName] = {
+    boards: data.boards_played,
+    mp: Math.round(data.avg_matchpoint_pct * 10) / 10,
+    ...causes,
+  };
   setHistory(h);
-  historySavedForSession = true;
 }
 
 function clearHistory() {
