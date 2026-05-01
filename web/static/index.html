@@ -2831,10 +2831,35 @@ async function runBatch(batchItems) {
 }
 
 async function bootstrapAnalyze() {
-  // Check for batch mode first (extension wrote [{session_id, source_url}] array).
-  let batchRaw;
-  try { batchRaw = sessionStorage.getItem(BATCH_KEY); } catch (e) {}
+  // Poll for whichever key the extension content script writes first.
+  // Both single-game (pending-session) and batch (pending-batch) paths
+  // go through the same 2 s window so content-script timing doesn't matter.
+  showLoading(true);
+  let raw = null;
+  let batchRaw = null;
+  let earlyResolve;
+  const earlyPromise = new Promise(r => { earlyResolve = r; });
+  const onHandoff = () => earlyResolve();
+  window.addEventListener('bridge-classroom-handoff', onHandoff, { once: true });
+
+  try {
+    for (let attempt = 0; attempt < 40; attempt++) { // 40 × 50ms = 2s
+      try { raw = sessionStorage.getItem(PENDING_KEY); } catch (e) {}
+      if (raw) break;
+      try { batchRaw = sessionStorage.getItem(BATCH_KEY); } catch (e) {}
+      if (batchRaw) break;
+      await Promise.race([
+        new Promise(r => setTimeout(r, 50)),
+        earlyPromise,
+      ]);
+    }
+  } finally {
+    window.removeEventListener('bridge-classroom-handoff', onHandoff);
+  }
+
+  // Batch mode — one-shot consume then hand off to runBatch.
   if (batchRaw) {
+    showLoading(false);
     try { sessionStorage.removeItem(BATCH_KEY); } catch (e) {}
     let batch;
     try { batch = JSON.parse(batchRaw); } catch (e) {
@@ -2848,29 +2873,7 @@ async function bootstrapAnalyze() {
     return;
   }
 
-  // Single-game path: poll for pending-session written by the extension.
-  showLoading(true);
-  let raw = null;
-  let earlyResolve;
-  const earlyPromise = new Promise(r => { earlyResolve = r; });
-  const onHandoff = () => earlyResolve();
-  window.addEventListener('bridge-classroom-handoff', onHandoff, { once: true });
-
-  try {
-    for (let attempt = 0; attempt < 40; attempt++) { // 40 × 50ms = 2s
-      try { raw = sessionStorage.getItem(PENDING_KEY); } catch (e) {}
-      if (raw) break;
-      await Promise.race([
-        new Promise(r => setTimeout(r, 50)),
-        earlyPromise,
-      ]);
-    }
-  } finally {
-    window.removeEventListener('bridge-classroom-handoff', onHandoff);
-  }
-
-  // One-shot consume: remove immediately even on error so a refresh shows
-  // EMPTY rather than re-applying stale data.
+  // One-shot consume for single-game path.
   try {
     if (raw) sessionStorage.removeItem(PENDING_KEY);
   } catch (e) {
