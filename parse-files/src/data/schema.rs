@@ -200,6 +200,20 @@ pub struct Pair {
     #[serde(default)]
     pub section: Option<String>,
     pub players: Vec<Player>,
+    /// Stratification tier for this pair in this event (e.g. "A", "B", "C").
+    #[serde(default)]
+    pub strat: Option<String>,
+    /// Masterpoint award earned by this pair for this session.
+    #[serde(default)]
+    pub masterpoints: Option<MasterpointAward>,
+}
+
+/// Masterpoint award for a pair in a session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MasterpointAward {
+    pub amount: f64,
+    /// Color tier: "black", "silver", "red", "gold", "platinum".
+    pub color: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

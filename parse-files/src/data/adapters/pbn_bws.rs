@@ -129,6 +129,8 @@ pub fn load_normalized(
                 schema_player(&n_name, n_acbl),
                 schema_player(&s_name, s_acbl),
             ],
+            strat: None,
+            masterpoints: None,
         };
         let ew_pair = SchemaPair {
             number: Some(received.pair_ew),
@@ -137,6 +139,8 @@ pub fn load_normalized(
                 schema_player(&w_name, w_acbl),
                 schema_player(&e_name, e_acbl),
             ],
+            strat: None,
+            masterpoints: None,
         };
 
         let result = if is_passout {

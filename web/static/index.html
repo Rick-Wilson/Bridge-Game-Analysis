@@ -121,6 +121,32 @@ tr.clickable-row:hover td { background: #e0e7ff; }
 #error { color: var(--play); padding: 0.75rem; text-align: center; }
 .pbn-notice { background: #fef3c7; border: 1px solid #f59e0b; border-radius: var(--radius); padding: 0.75rem 1rem; margin-bottom: 1rem; font-size: 0.85rem; }
 
+/* MP award color badges */
+.mp-award { display: inline-block; padding: 0.125rem 0.4rem; border-radius: 999px; font-size: 0.7rem; font-weight: 600; color: white; white-space: nowrap; }
+.mp-award-black { background: #374151; }
+.mp-award-silver { background: #6b7280; }
+.mp-award-red { background: #dc2626; }
+.mp-award-gold { background: #b45309; }
+.mp-award-platinum { background: #7c3aed; }
+
+/* Batch progress */
+.batch-progress { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 2.5rem 1rem; text-align: center; margin-bottom: 0.625rem; }
+.batch-progress p { color: var(--text-muted); font-size: 0.9rem; margin-top: 0.5rem; }
+.batch-bar-wrap { width: 100%; max-width: 380px; height: 6px; background: #e5e7eb; border-radius: 3px; overflow: hidden; margin: 0.75rem auto 0; }
+.batch-bar { height: 100%; background: var(--primary); border-radius: 3px; transition: width 0.3s; }
+
+/* Track modal */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.45); z-index: 100; }
+.modal-box { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); z-index: 101; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 1.25rem 1.5rem; max-width: 500px; width: 92%; }
+.modal-box h3 { font-size: 1rem; margin-bottom: 0.25rem; }
+.modal-desc { font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem; }
+.modal-search { width: 100%; padding: 0.3rem 0.6rem; border: 1px solid var(--border); border-radius: var(--radius); font-size: 0.8rem; margin-bottom: 0.5rem; }
+.modal-player-list { max-height: 260px; overflow-y: auto; border: 1px solid var(--border); border-radius: var(--radius); padding: 0.4rem 0.6rem; display: flex; flex-direction: column; gap: 0.25rem; }
+.modal-player-list label { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; cursor: pointer; padding: 0.15rem 0; }
+.modal-player-list label:hover { color: var(--primary); }
+.modal-actions { display: flex; gap: 0.5rem; margin-top: 0.75rem; flex-wrap: wrap; align-items: center; }
+.modal-sel-btns { display: flex; gap: 0.375rem; margin-left: auto; }
+
 /* History view */
 .history-controls { display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap; margin-bottom: 0.875rem; }
 .history-controls label { font-size: 0.85rem; font-weight: 600; white-space: nowrap; }
@@ -268,6 +294,32 @@ tr.clickable-row:hover td { background: #e0e7ff; }
     <div id="board-summary" class="summary"></div>
     <div class="results-table">
       <table><thead id="board-thead"></thead><tbody id="board-tbody"></tbody></table>
+    </div>
+  </div>
+
+  <!-- Batch import progress -->
+  <div id="batch-progress" class="batch-progress hidden">
+    <strong id="batch-status-title">Importing history…</strong>
+    <p id="batch-status-detail"></p>
+    <div class="batch-bar-wrap"><div class="batch-bar" id="batch-bar" style="width:0%"></div></div>
+  </div>
+
+  <!-- Track-player selection modal (shown when no tracked players exist at batch start) -->
+  <div id="track-modal" class="hidden">
+    <div class="modal-backdrop"></div>
+    <div class="modal-box">
+      <h3>Who should we track?</h3>
+      <p class="modal-desc">No tracked players found. Select the players you'd like to save history for, then start the batch. You only need to do this once — they'll be tracked automatically going forward.</p>
+      <input class="modal-search" id="track-modal-search" type="text" placeholder="Filter names…" oninput="filterTrackModal(this.value)">
+      <div class="modal-player-list" id="track-modal-players"></div>
+      <div class="modal-actions">
+        <button class="btn" id="track-modal-start">Start Batch</button>
+        <button class="btn btn-outline" id="track-modal-cancel">Cancel</button>
+        <div class="modal-sel-btns">
+          <button class="btn btn-sm btn-outline" onclick="setAllTrackModal(true)">All</button>
+          <button class="btn btn-sm btn-outline" onclick="setAllTrackModal(false)">None</button>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1336,10 +1388,15 @@ function jsAnalyzePlayer(game, sessionIdx, playerName) {
   let defCount = 0, defMP = 0;
   let dvfSum = 0, dvfCount = 0;
   let fieldMatchCount = 0;
+  let strat = null;
+  let mpAward = null;
   const board_results = [];
 
   for (const { board, result, seat } of rows) {
     const direction = (seat === 'N' || seat === 'S') ? 'NS' : 'EW';
+    const pairRecord = direction === 'NS' ? result.ns_pair : result.ew_pair;
+    if (strat == null && pairRecord?.strat) strat = pairRecord.strat;
+    if (mpAward == null && pairRecord?.masterpoints) mpAward = pairRecord.masterpoints;
     const role = playerRole(result, seat);
     const ctx = computeBoardContext(board.results, board.par);
     const mp = calculateMatchpointPct(result, board.results, direction);
@@ -1393,6 +1450,8 @@ function jsAnalyzePlayer(game, sessionIdx, playerName) {
     defending_mp_pct: defCount > 0 ? defMP / defCount : null,
     avg_declarer_vs_field: dvfCount > 0 ? dvfSum / dvfCount : null,
     field_contract_pct: (fieldMatchCount / rows.length) * 100,
+    strat,
+    mp_award: mpAward,
     board_results,
   };
 }
@@ -2409,9 +2468,25 @@ function setHistory(h) {
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch (e) {}
 }
 
+/** Derive event metadata from lastUpload (normal flow) or cachedNormalized
+ *  (batch flow where lastUpload is null). */
+function deriveEventMeta() {
+  if (lastUpload) return {
+    event_name: lastUpload.event_name || 'Game',
+    event_date: lastUpload.event_date || '',
+    source_url: cachedNormalized?.source_url || null,
+  };
+  const t = cachedNormalized?.tournaments?.[0];
+  const e = t?.events?.[0];
+  return {
+    event_name: e?.name || t?.name || 'Game',
+    event_date: e?.date || cachedNormalized?.fetched_at?.slice(0, 10) || '',
+    source_url: cachedNormalized?.source_url || null,
+  };
+}
+
 function autoSaveTrackedPlayers(game) {
   const h = getHistory();
-  if (!h.events.length) return;
   const tracked = new Set();
   for (const ev of h.events) {
     for (const name of Object.keys(ev.players)) tracked.add(name);
@@ -2426,20 +2501,20 @@ function autoSaveTrackedPlayers(game) {
 }
 
 function savePlayerToHistory(playerName, data) {
-  if (!lastUpload) return;
+  const meta = deriveEventMeta();
+  const eventId = `${meta.event_date || 'unknown'}|${meta.event_name}`;
   const causes = { Good: 0, Lucky: 0, Play: 0, Defense: 0, Auction: 0, Unlucky: 0 };
   for (const r of data.board_results) {
     if (r.cause in causes) causes[r.cause]++;
   }
-  const eventId = `${lastUpload.event_date || 'unknown'}|${lastUpload.event_name || 'Game'}`;
   const h = getHistory();
   let ev = h.events.find(e => e.id === eventId);
   if (!ev) {
     ev = {
       id: eventId,
-      event_name: lastUpload.event_name || 'Game',
-      event_date: lastUpload.event_date || '',
-      source_url: cachedNormalized?.source_url || null,
+      event_name: meta.event_name,
+      event_date: meta.event_date,
+      source_url: meta.source_url,
       saved_at: new Date().toISOString(),
       players: {},
     };
@@ -2449,6 +2524,8 @@ function savePlayerToHistory(playerName, data) {
   ev.players[playerName] = {
     boards: data.boards_played,
     mp: Math.round(data.avg_matchpoint_pct * 10) / 10,
+    strat: data.strat || null,
+    mp_award: data.mp_award || null,
     ...causes,
   };
   setHistory(h);
@@ -2533,12 +2610,18 @@ function renderHistoryPlayer(playerName) {
     const eventLink = e.source_url
       ? `<a href="${e.source_url}" target="_blank" rel="noopener">${e.event_name}</a>`
       : e.event_name;
+    const stratCell = p.strat || '—';
+    const mpAwardCell = p.mp_award
+      ? `<span class="mp-award mp-award-${(p.mp_award.color || 'black').toLowerCase()}">${p.mp_award.amount.toFixed(2)}</span>`
+      : '—';
     return `<tr>
       <td>${e.event_date || '—'}</td>
       <td>${eventLink}</td>
       <td class="text-right">${p.boards}</td>
       <td class="text-right ${mpColor}">${p.mp.toFixed(1)}%</td>
       <td class="text-right">${errorPct}%</td>
+      <td class="text-right">${stratCell}</td>
+      <td class="text-right">${mpAwardCell}</td>
       <td class="text-right"><span class="cause cause-Good">${p.Good}</span></td>
       <td class="text-right"><span class="cause cause-Lucky">${p.Lucky}</span></td>
       <td class="text-right"><span class="cause cause-Play">${p.Play}</span></td>
@@ -2563,6 +2646,7 @@ function renderHistoryPlayer(playerName) {
         <thead><tr>
           <th>Date</th><th>Event</th><th class="text-right">Boards</th>
           <th class="text-right">MP%</th><th class="text-right">Error%</th>
+          <th class="text-right">Strat</th><th class="text-right">MPs</th>
           <th class="text-right">Good</th><th class="text-right">Lucky</th>
           <th class="text-right">Play</th><th class="text-right">Defense</th>
           <th class="text-right">Auction</th><th class="text-right">Unlucky</th>
@@ -2582,6 +2666,7 @@ function renderHistoryPlayer(playerName) {
 // card; if it can't be parsed or accepted, we show the error card.
 
 const PENDING_KEY = 'pending-session';
+const BATCH_KEY = 'pending-batch';
 const SUPPORTED_MAJOR = 1;
 
 function isAnalyzePath() {
@@ -2609,12 +2694,139 @@ function showAnalyzeError(detail) {
   document.getElementById('analyze-error').classList.remove('hidden');
 }
 
+// ==================== Batch import ====================
+
+let _trackModalResolve = null;
+
+function filterTrackModal(q) {
+  const norm = q.trim().toLowerCase();
+  document.querySelectorAll('#track-modal-players label').forEach(lbl => {
+    lbl.style.display = !norm || lbl.textContent.toLowerCase().includes(norm) ? '' : 'none';
+  });
+}
+
+function setAllTrackModal(checked) {
+  document.querySelectorAll('#track-modal-players input').forEach(cb => {
+    if (cb.closest('label').style.display !== 'none') cb.checked = checked;
+  });
+}
+
+function showTrackModal(players) {
+  return new Promise(resolve => {
+    _trackModalResolve = resolve;
+    const listEl = document.getElementById('track-modal-players');
+    document.getElementById('track-modal-search').value = '';
+    listEl.innerHTML = players.map(name =>
+      `<label><input type="checkbox" value="${esc(name)}"> ${name}</label>`
+    ).join('');
+    document.getElementById('track-modal').classList.remove('hidden');
+
+    document.getElementById('track-modal-start').onclick = () => {
+      const selected = [...listEl.querySelectorAll('input:checked')].map(i => i.value);
+      if (!selected.length) { alert('Please select at least one player.'); return; }
+      document.getElementById('track-modal').classList.add('hidden');
+      resolve(selected);
+    };
+    document.getElementById('track-modal-cancel').onclick = () => {
+      document.getElementById('track-modal').classList.add('hidden');
+      resolve(null);
+    };
+  });
+}
+
+async function runBatch(batchItems) {
+  const total = batchItems.length;
+  const titleEl = document.getElementById('batch-status-title');
+  const detailEl = document.getElementById('batch-status-detail');
+  const barEl = document.getElementById('batch-bar');
+  const setStatus = (title, detail, pct) => {
+    if (titleEl) titleEl.textContent = title;
+    if (detailEl) detailEl.textContent = detail || '';
+    if (barEl) barEl.style.width = `${pct ?? 0}%`;
+  };
+
+  const h = getHistory();
+  const hasTracked = h.events.some(ev => Object.keys(ev.players).length > 0);
+
+  let startIdx = 0;
+
+  if (!hasTracked) {
+    setStatus('Loading first event…', '', 0);
+    sessionId = batchItems[0].session_id;
+    cachedNormalized = null;
+    lastUpload = null;
+    currentSessionIdx = 0;
+    let firstGame;
+    try {
+      firstGame = await getJSON(`${BASE}/api/normalized?session=${sessionId}`);
+      cachedNormalized = firstGame;
+    } catch (e) {
+      setStatus('Error loading first event', e.message);
+      return;
+    }
+    const players = derivePlayers(firstGame, 0);
+    const selected = await showTrackModal(players);
+    if (!selected) {
+      document.getElementById('batch-progress').classList.add('hidden');
+      uploadArea.classList.remove('hidden');
+      document.getElementById('download-help').classList.remove('hidden');
+      return;
+    }
+    for (const name of selected) {
+      const data = jsAnalyzePlayer(firstGame, 0, name);
+      if (data) savePlayerToHistory(name, data);
+    }
+    setStatus('Importing history…', `Saved 1 of ${total}`, Math.round(1 / total * 100));
+    startIdx = 1;
+  }
+
+  let skipped = 0;
+  for (let i = startIdx; i < total; i++) {
+    setStatus('Importing history…', `Saving event ${i + 1} of ${total}…`, Math.round((i + 1) / total * 100));
+    sessionId = batchItems[i].session_id;
+    cachedNormalized = null;
+    lastUpload = null;
+    currentSessionIdx = 0;
+    try {
+      await loadNormalized();
+    } catch (e) {
+      skipped++;
+    }
+  }
+
+  const saved = total - skipped;
+  setStatus('Done!', `${saved} event${saved === 1 ? '' : 's'} saved to history${skipped ? ` (${skipped} skipped)` : ''}.`, 100);
+  await new Promise(r => setTimeout(r, 1400));
+
+  document.getElementById('batch-progress').classList.add('hidden');
+  // Set up minimal event-header state so the History tab is navigable
+  cachedPlayers = cachedNormalized ? derivePlayers(cachedNormalized, 0) : [];
+  cachedBoards = cachedNormalized ? deriveBoards(cachedNormalized, 0) : [];
+  document.getElementById('event-name').textContent = 'Batch Import';
+  document.getElementById('event-date').textContent = `${saved} events`;
+  document.getElementById('event-header').classList.remove('hidden');
+  switchView('history');
+}
+
 async function bootstrapAnalyze() {
-  // The extension's content script and our page script can fire in either
-  // order depending on the extension's run_at. Poll sessionStorage for up
-  // to ~2s before giving up. We also listen for a custom event the
-  // extension can dispatch ("bridge-classroom-handoff") to short-circuit
-  // the wait when it finishes early.
+  // Check for batch mode first (extension wrote [{session_id, source_url}] array).
+  let batchRaw;
+  try { batchRaw = sessionStorage.getItem(BATCH_KEY); } catch (e) {}
+  if (batchRaw) {
+    try { sessionStorage.removeItem(BATCH_KEY); } catch (e) {}
+    let batch;
+    try { batch = JSON.parse(batchRaw); } catch (e) {
+      showAnalyzeError('Batch data was not valid JSON: ' + e.message); return;
+    }
+    if (!Array.isArray(batch) || !batch.length) { showAnalyzeEmpty(); return; }
+    uploadArea.classList.add('hidden');
+    document.getElementById('download-help').classList.add('hidden');
+    document.getElementById('batch-progress').classList.remove('hidden');
+    runBatch(batch);
+    return;
+  }
+
+  // Single-game path: poll for pending-session written by the extension.
   showLoading(true);
   let raw = null;
   let earlyResolve;
