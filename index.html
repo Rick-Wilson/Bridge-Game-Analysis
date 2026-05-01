@@ -1637,6 +1637,8 @@ function applyUploadResponse(data, opts) {
     cachedNormalized = data.normalized;
     try { sessionStorage.setItem('bc-game', JSON.stringify(data.normalized)); } catch (e) {}
     try { autoSaveTrackedPlayers(data.normalized); } catch (e) {}
+    const cacheId = `${data.event_date || 'unknown'}|${data.event_name || 'Game'}`;
+    saveToEventCache(cacheId, data.normalized).catch(() => {});
   }
   cachedPlayers = data.players;
   cachedBoards = data.boards;
@@ -2489,6 +2491,8 @@ function hideAll() {
 // ==================== History ====================
 const HISTORY_KEY = 'bridge-analysis-history';
 const HISTORY_MAX_EVENTS = 150;
+const EVENT_CACHE_KEY = 'bc-event-cache';
+const EVENT_CACHE_MAX = 10;
 
 function getHistory() {
   try { return JSON.parse(localStorage.getItem(HISTORY_KEY) || '{"version":1,"events":[]}'); }
@@ -2497,6 +2501,89 @@ function getHistory() {
 
 function setHistory(h) {
   try { localStorage.setItem(HISTORY_KEY, JSON.stringify(h)); } catch (e) {}
+}
+
+// ---- Event cache (compressed normalized JSON, last EVENT_CACHE_MAX games) ----
+
+async function compressJSON(obj) {
+  const stream = new CompressionStream('gzip');
+  const writer = stream.writable.getWriter();
+  writer.write(new TextEncoder().encode(JSON.stringify(obj)));
+  writer.close();
+  const chunks = [];
+  const reader = stream.readable.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  let s = '';
+  for (let i = 0; i < out.length; i++) s += String.fromCharCode(out[i]);
+  return btoa(s);
+}
+
+async function decompressJSON(b64) {
+  const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const stream = new DecompressionStream('gzip');
+  const writer = stream.writable.getWriter();
+  writer.write(bytes);
+  writer.close();
+  const chunks = [];
+  const reader = stream.readable.getReader();
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    chunks.push(value);
+  }
+  const out = new Uint8Array(chunks.reduce((n, c) => n + c.length, 0));
+  let off = 0;
+  for (const c of chunks) { out.set(c, off); off += c.length; }
+  return JSON.parse(new TextDecoder().decode(out));
+}
+
+async function saveToEventCache(eventId, normalized) {
+  try {
+    const compressed = await compressJSON(normalized);
+    let cache = [];
+    try { cache = JSON.parse(localStorage.getItem(EVENT_CACHE_KEY) || '[]'); } catch (e) {}
+    cache = cache.filter(e => e.key !== eventId);
+    cache.unshift({ key: eventId, compressed });
+    if (cache.length > EVENT_CACHE_MAX) cache.length = EVENT_CACHE_MAX;
+    localStorage.setItem(EVENT_CACHE_KEY, JSON.stringify(cache));
+  } catch (e) {}
+}
+
+async function loadFromEventCache(eventId) {
+  try {
+    const cache = JSON.parse(localStorage.getItem(EVENT_CACHE_KEY) || '[]');
+    const entry = cache.find(e => e.key === eventId);
+    if (!entry) return null;
+    return await decompressJSON(entry.compressed);
+  } catch (e) { return null; }
+}
+
+function eventCacheKeySet() {
+  try {
+    return new Set(JSON.parse(localStorage.getItem(EVENT_CACHE_KEY) || '[]').map(e => e.key));
+  } catch (e) { return new Set(); }
+}
+
+async function loadHistoryEvent(eventId, sourceUrl) {
+  const normalized = await loadFromEventCache(eventId);
+  if (normalized) {
+    enrichTricks(normalized);
+    const data = deriveUploadResponse(normalized);
+    mergeNamesToStorage(data.player_acbl);
+    applyUploadResponse(data, { hasPbn: true });
+    switchView('players');
+  } else if (sourceUrl) {
+    window.open(sourceUrl + '#bc-analyze', '_blank');
+  } else {
+    alert('This event is not in the local cache. Re-extract it using the extension.');
+  }
 }
 
 /** Convert strat integer (1-based) to letter: 1→A, 2→B, 3→C … */
@@ -2583,6 +2670,7 @@ function savePlayerToHistory(playerName, data) {
 function clearHistory() {
   if (!confirm('Clear all saved history? This cannot be undone.')) return;
   localStorage.removeItem(HISTORY_KEY);
+  localStorage.removeItem(EVENT_CACHE_KEY);
   renderHistory();
 }
 
@@ -2651,13 +2739,16 @@ function renderHistoryPlayer(playerName) {
   const sparkErr = sparklineSvg(errPts, '#dc2626');
   const sparkMp  = sparklineSvg(mpPts,  '#16a34a');
 
+  const cachedKeys = eventCacheKeySet();
   const tableRows = [...eventsWithPlayer].reverse().map(e => {
     const p = e.players[playerName];
     const errors = p.Play + p.Defense + p.Auction;
     const errorPct = p.boards > 0 ? (errors / p.boards * 100).toFixed(0) : '-';
     const mpColor = p.mp >= 50 ? 'mp-good' : 'mp-bad';
+    const isCached = cachedKeys.has(e.id);
+    const loadBtn = `<button class="btn btn-sm btn-outline" style="margin-left:0.4rem;padding:0.1rem 0.5rem;font-size:0.75rem" title="${isCached ? 'Load from local cache' : 'Re-extract with extension'}" onclick="loadHistoryEvent(${JSON.stringify(e.id)},${JSON.stringify(e.source_url||null)})">${isCached ? '⟳' : '↗'}</button>`;
     const eventLink = e.source_url
-      ? `<a href="${e.source_url}#bc-analyze" target="_blank" rel="noopener">${e.event_name}</a>`
+      ? `<a href="${e.source_url}#bc-analyze" target="_blank" rel="noopener">${e.event_name}</a>${loadBtn}`
       : e.event_name;
     const stratCell = p.strat != null ? stratLabel(p.strat) : '—';
     const mpAwardCell = p.mp_award
@@ -2932,6 +3023,8 @@ async function runBatch(batchItems) {
       const data = jsAnalyzePlayer(firstGame, 0, name);
       if (data) savePlayerToHistory(name, data);
     }
+    const firstMeta = deriveEventMeta();
+    saveToEventCache(`${firstMeta.event_date || 'unknown'}|${firstMeta.event_name || 'Game'}`, firstGame).catch(() => {});
     setStatus('Importing history…', `Saved 1 of ${total}`, Math.round(1 / total * 100));
     startIdx = 1;
   }
@@ -2944,6 +3037,8 @@ async function runBatch(batchItems) {
       cachedNormalized = batchItems[i].envelope;
       currentSessionIdx = 0;
       autoSaveTrackedPlayers(cachedNormalized);
+      const batchMeta = deriveEventMeta();
+      saveToEventCache(`${batchMeta.event_date || 'unknown'}|${batchMeta.event_name || 'Game'}`, cachedNormalized).catch(() => {});
     } catch (e) {
       skipped++;
     }
