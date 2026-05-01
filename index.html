@@ -2746,9 +2746,11 @@ function renderHistoryPlayer(playerName) {
     const errorPct = p.boards > 0 ? (errors / p.boards * 100).toFixed(0) : '-';
     const mpColor = p.mp >= 50 ? 'mp-good' : 'mp-bad';
     const isCached = cachedKeys.has(e.id);
-    const loadBtn = `<button class="btn btn-sm btn-outline" style="margin-left:0.4rem;padding:0.1rem 0.5rem;font-size:0.75rem" title="${isCached ? 'Load from local cache' : 'Re-extract with extension'}" onclick="loadHistoryEvent(${JSON.stringify(e.id)},${JSON.stringify(e.source_url||null)})">${isCached ? '⟳' : '↗'}</button>`;
+    const reExtractLink = e.source_url
+      ? ` <a href="${e.source_url}#bc-analyze" target="_blank" rel="noopener" title="Re-extract with extension" style="color:var(--text-muted);font-size:0.85em;text-decoration:none">↗</a>`
+      : '';
     const eventLink = e.source_url
-      ? `<a href="${e.source_url}#bc-analyze" target="_blank" rel="noopener">${e.event_name}</a>${loadBtn}`
+      ? `<span style="cursor:pointer;color:var(--primary);text-decoration:underline" title="${isCached ? 'Load from local cache' : 'Open source page for extraction'}" onclick="loadHistoryEvent(${JSON.stringify(e.id)},${JSON.stringify(e.source_url||null)})">${e.event_name}</span>${reExtractLink}`
       : e.event_name;
     const stratCell = p.strat != null ? stratLabel(p.strat) : '—';
     const mpAwardCell = p.mp_award
