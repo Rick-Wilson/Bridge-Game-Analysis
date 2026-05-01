@@ -130,7 +130,7 @@ pub fn load_normalized(
                 schema_player(&s_name, s_acbl),
             ],
             strat: None,
-            masterpoints: None,
+            strat_ranks: vec![],
         };
         let ew_pair = SchemaPair {
             number: Some(received.pair_ew),
@@ -140,7 +140,7 @@ pub fn load_normalized(
                 schema_player(&e_name, e_acbl),
             ],
             strat: None,
-            masterpoints: None,
+            strat_ranks: vec![],
         };
 
         let result = if is_passout {
@@ -482,6 +482,7 @@ fn schema_player(name: &str, acbl: Option<String>) -> SchemaPlayer {
         name: name.to_string(),
         acbl_id: acbl,
         external_ids: HashMap::new(),
+        masterpoints_earned: vec![],
     }
 }
 

@@ -200,19 +200,27 @@ pub struct Pair {
     #[serde(default)]
     pub section: Option<String>,
     pub players: Vec<Player>,
-    /// Stratification tier for this pair in this event (e.g. "A", "B", "C").
+    /// Stratification tier (1 = A, 2 = B, 3 = C …). Null when not available.
     #[serde(default)]
-    pub strat: Option<String>,
-    /// Masterpoint award earned by this pair for this session.
+    pub strat: Option<i32>,
+    /// Placements within each strat tier. Empty when not available.
     #[serde(default)]
-    pub masterpoints: Option<MasterpointAward>,
+    pub strat_ranks: Vec<StratRank>,
 }
 
-/// Masterpoint award for a pair in a session.
+/// A strat-placement entry for a pair.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StratRank {
+    pub strat: i32,
+    pub rank: i32,
+    pub scope: String,
+}
+
+/// Individual masterpoint award entry (one per pigment color).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MasterpointAward {
     pub amount: f64,
-    /// Color tier: "black", "silver", "red", "gold", "platinum".
+    /// ACBL pigment name: "Black", "Silver", "Red", "Gold", "Platinum", etc.
     pub color: String,
 }
 
@@ -223,6 +231,10 @@ pub struct Player {
     pub acbl_id: Option<String>,
     #[serde(default)]
     pub external_ids: HashMap<String, String>,
+    /// Masterpoints awarded to this player for this session, broken down by color.
+    /// Empty array when no award data is available.
+    #[serde(default)]
+    pub masterpoints_earned: Vec<MasterpointAward>,
 }
 
 /// The current major version this analyzer accepts.
