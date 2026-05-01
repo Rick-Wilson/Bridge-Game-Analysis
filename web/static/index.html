@@ -2422,6 +2422,7 @@ function savePlayerToHistory(playerName, data) {
       id: eventId,
       event_name: lastUpload.event_name || 'Game',
       event_date: lastUpload.event_date || '',
+      source_url: cachedNormalized?.source_url || null,
       saved_at: new Date().toISOString(),
       players: {},
     };
@@ -2512,9 +2513,12 @@ function renderHistoryPlayer(playerName) {
     const errors = p.Play + p.Defense + p.Auction;
     const errorPct = p.boards > 0 ? (errors / p.boards * 100).toFixed(0) : '-';
     const mpColor = p.mp >= 50 ? 'mp-good' : 'mp-bad';
+    const eventLink = e.source_url
+      ? `<a href="${e.source_url}" target="_blank" rel="noopener">${e.event_name}</a>`
+      : e.event_name;
     return `<tr>
       <td>${e.event_date || '—'}</td>
-      <td>${e.event_name}</td>
+      <td>${eventLink}</td>
       <td class="text-right">${p.boards}</td>
       <td class="text-right ${mpColor}">${p.mp.toFixed(1)}%</td>
       <td class="text-right">${errorPct}%</td>

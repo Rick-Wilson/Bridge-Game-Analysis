@@ -16,6 +16,9 @@ pub struct NormalizedGame {
     pub schema_version: String,
     pub source: String,
     pub fetched_at: String,
+    /// URL of the page the data was scraped from; set by the extension, absent for file uploads.
+    #[serde(default)]
+    pub source_url: Option<String>,
     pub tournaments: Vec<Tournament>,
 }
 

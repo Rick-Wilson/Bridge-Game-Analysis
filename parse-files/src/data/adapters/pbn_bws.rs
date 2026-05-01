@@ -275,6 +275,7 @@ pub fn load_normalized(
         schema_version: "1.0".to_string(),
         source: "pbn-bws".to_string(),
         fetched_at: chrono::Utc::now().to_rfc3339(),
+        source_url: None,
         tournaments: vec![tournament],
     })
 }
