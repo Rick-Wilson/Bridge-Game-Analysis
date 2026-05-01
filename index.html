@@ -2631,7 +2631,7 @@ async function loadHistoryEvent(eventId, sourceUrl) {
     else alert('Cache read failed. Re-extract it using the extension.');
     return;
   }
-  enrichTricks(normalized);
+  enrichNormalized(normalized);
   const data = deriveUploadResponse(normalized);
   mergeNamesToStorage(data.player_acbl);
   applyUploadResponse(data, { hasPbn: true });
@@ -2857,6 +2857,90 @@ function renderHistoryPlayer(playerName) {
     </div>`;
 }
 
+// ==================== Client-side handviewer URL enrichment ====================
+// Port of Rust enrich_handviewer_urls in Bridge-Event-Parser-Service/src/builder.rs
+// and the BBO LIN URL builder in src/types.rs.
+
+const _BBO_DEALER_DIGIT = { S: '1', W: '2', N: '3', E: '4' };
+const _BBO_VUL_CODE     = { None: 'o', NS: 'n', EW: 'e', Both: 'b', All: 'b' };
+const _BBO_SEAT_ORDER   = ['S', 'W', 'N', 'E']; // BBO's rotation order
+
+function _rankToLin(r) { return r === '10' ? 'T' : r; }
+
+function _formatHandLin(hand) {
+  if (!hand) return 'SHDC';
+  let s = '';
+  for (const suit of ['S', 'H', 'D', 'C']) {
+    s += suit;
+    for (const rank of (hand[suit] || [])) s += _rankToLin(rank);
+  }
+  return s;
+}
+
+function _buildBiddingLin(dealer, contract, declarer) {
+  const m = (contract || '').match(/^(\d)(NT|[CDHS])(X{0,2})$/);
+  if (!m) return '';
+  const [, level, strain, dbl] = m;
+  const linStrain = strain === 'NT' ? 'N' : strain;
+  const dealerIdx   = _BBO_SEAT_ORDER.indexOf(dealer);
+  const declarerIdx = _BBO_SEAT_ORDER.indexOf(declarer);
+  if (dealerIdx === -1 || declarerIdx === -1) return '';
+  const bids = [];
+  let cur = dealerIdx;
+  while (cur !== declarerIdx) { bids.push('mb|p|'); cur = (cur + 1) % 4; }
+  bids.push(`mb|${level}${linStrain}|`);
+  if      (dbl === '')   bids.push('mb|p|', 'mb|p|', 'mb|p|');
+  else if (dbl === 'X')  bids.push('mb|d|', 'mb|p|', 'mb|p|', 'mb|p|');
+  else                   bids.push('mb|d|', 'mb|p|', 'mb|r|', 'mb|p|', 'mb|p|');
+  return bids.join('');
+}
+
+function _buildHandviewerUrl(board, result) {
+  const deal = board.deal;
+  if (!deal || !board.dealer) return null;
+  const dealerDigit = _BBO_DEALER_DIGIT[board.dealer];
+  if (!dealerDigit) return null;
+  const vulCode = _BBO_VUL_CODE[board.vulnerability] ?? 'o';
+
+  // ns_pair players: [0]=North [1]=South; ew_pair: [0]=West [1]=East
+  const np = result.ns_pair?.players, ep = result.ew_pair?.players;
+  const n = np?.[0]?.name, s = np?.[1]?.name;
+  const w = ep?.[0]?.name, e = ep?.[1]?.name;
+  const pnSection = (n && s && w && e)
+    ? `pn|${[s,w,n,e].map(nm => displayName(nm).replace(/ /g, '+')).join(',')}|`
+    : '';
+
+  const c = result.contract;
+  const biddingSection = (c && c !== 'PASS' && result.declarer)
+    ? _buildBiddingLin(board.dealer, c, result.declarer)
+    : '';
+
+  const lin = `${pnSection}md|${dealerDigit}${_formatHandLin(deal.S)},${_formatHandLin(deal.W)},${_formatHandLin(deal.N)},|sv|${vulCode}|ah|Board+${board.number}|${biddingSection}`;
+  return `https://www.bridgebase.com/tools/handviewer.html?lin=${encodeURIComponent(lin)}`;
+}
+
+function enrichHandviewerUrls(normalized) {
+  for (const t of normalized.tournaments ?? []) {
+    for (const ev of t.events ?? []) {
+      for (const s of ev.sessions ?? []) {
+        for (const b of s.boards ?? []) {
+          if (!b.deal || !b.dealer) continue;
+          for (const r of b.results ?? []) {
+            const url = _buildHandviewerUrl(b, r);
+            if (url) r.handviewer_url = url;
+          }
+        }
+      }
+    }
+  }
+}
+
+/** Run both enrichment passes: trick counts and handviewer URLs. */
+function enrichNormalized(normalized) {
+  enrichTricks(normalized);
+  enrichHandviewerUrls(normalized);
+}
+
 // ==================== Client-side tricks enrichment ====================
 // Port of Rust enrich_tricks in Bridge-Event-Parser-Service/src/builder.rs.
 // Fills in null trick counts from score + contract + vulnerability so the
@@ -3065,7 +3149,7 @@ async function runBatch(batchItems) {
     let firstGame;
     try {
       const firstEnvelope = await decompressJSON(batchItems[0].compressed);
-      enrichTricks(firstEnvelope);
+      enrichNormalized(firstEnvelope);
       firstGame = firstEnvelope;
       cachedNormalized = firstGame;
     } catch (e) {
@@ -3095,7 +3179,7 @@ async function runBatch(batchItems) {
     setStatus('Importing history…', `Saving event ${i + 1} of ${total}…`, Math.round((i + 1) / total * 100));
     try {
       const env = await decompressJSON(batchItems[i].compressed);
-      enrichTricks(env);
+      enrichNormalized(env);
       cachedNormalized = env;
       currentSessionIdx = 0;
       autoSaveTrackedPlayers(cachedNormalized);
@@ -3216,7 +3300,7 @@ async function bootstrapAnalyze() {
   }
 
   try {
-    enrichTricks(parsed);
+    enrichNormalized(parsed);
     const data = deriveUploadResponse(parsed);
     sessionId = data.session_id;
     mergeNamesToStorage(data.player_acbl);
