@@ -1036,7 +1036,7 @@ function determineCauseAndNotes(ctx) {
         const ddDiff = ctx.tricksMade - ctx.ddTricks;
         if (ddDiff > 0) return { cause: 'Lucky', notes: `defense slip (DD ${ctx.ddTricks})` };
         if (ddDiff < 0) return { cause: 'Play', notes: `below DD (${ctx.ddTricks})` };
-        return { cause: 'Good', notes: `DD par (${ctx.ddTricks})` };
+        return { cause: 'Good', notes: `field par (${ctx.ddTricks})` };
       }
       if (ctx.declarerVsField != null) {
         const td = rustRound(ctx.declarerVsField);
@@ -1103,7 +1103,7 @@ function determineCauseAndNotes(ctx) {
         const ddDiff = ctx.tricksMade - ctx.ddTricks;
         if (ddDiff > 0) return { cause: 'Lucky', notes: `defense slip (DD ${ctx.ddTricks})` };
         if (ddDiff < 0) return { cause: 'Play', notes: `pard below DD (${ctx.ddTricks})` };
-        return { cause: 'Good', notes: `DD par (${ctx.ddTricks})` };
+        return { cause: 'Good', notes: `field par (${ctx.ddTricks})` };
       }
       if (ctx.declarerVsField != null) {
         const td = rustRound(ctx.declarerVsField);
@@ -1169,7 +1169,7 @@ function determineCauseAndNotes(ctx) {
         const ddDiff = ctx.tricksMade - ctx.ddTricks;
         if (ddDiff > 0) return { cause: 'Defense', notes: `DD slip (gave ${ddDiff} extra)` };
         if (ddDiff < 0) return { cause: 'Lucky', notes: `held below DD (${ctx.ddTricks})` };
-        return { cause: 'Good', notes: `DD par (${ctx.ddTricks})` };
+        return { cause: 'Good', notes: `field par (${ctx.ddTricks})` };
       }
       if (ctx.declarerVsField != null) {
         const td = rustRound(ctx.declarerVsField);
