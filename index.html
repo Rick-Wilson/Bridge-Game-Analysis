@@ -1640,8 +1640,7 @@ function applyUploadResponse(data, opts) {
     cachedNormalized = data.normalized;
     try { sessionStorage.setItem('bc-game', JSON.stringify(data.normalized)); } catch (e) {}
     try { autoSaveTrackedPlayers(data.normalized); } catch (e) {}
-    const cacheId = `${data.event_date || 'unknown'}|${data.event_name || 'Game'}`;
-    saveToEventCache(cacheId, data.normalized).catch(() => {});
+    saveToEventCache(eventCacheId(data.normalized), data.normalized).catch(() => {});
   }
   cachedPlayers = data.players;
   cachedBoards = data.boards;
@@ -2587,17 +2586,43 @@ async function decompressJSON(b64) {
   return JSON.parse(new TextDecoder().decode(out));
 }
 
+/** Single source of truth for the cache key — used by both save and lookup
+ *  to prevent the date/name fallback drift that would create duplicate or
+ *  missed entries across single-game vs. batch flows. */
+function eventCacheId(normalized) {
+  const t = normalized?.tournaments?.[0];
+  const e = t?.events?.[0];
+  const date = e?.date || normalized?.fetched_at?.slice(0, 10) || 'unknown';
+  const name = e?.name || t?.name || 'Game';
+  return `${date}|${name}`;
+}
+
 async function saveToEventCache(eventId, normalized) {
+  let beforeLen = 0, afterLen = 0;
   try {
     const compressed = await compressJSON(normalized);
     let cache = [];
     try { cache = JSON.parse(localStorage.getItem(EVENT_CACHE_KEY) || '[]'); } catch (e) {}
+    beforeLen = cache.length;
     cache = cache.filter(e => e.key !== eventId);
     cache.unshift({ key: eventId, compressed });
     if (cache.length > EVENT_CACHE_MAX) cache.length = EVENT_CACHE_MAX;
+    afterLen = cache.length;
     localStorage.setItem(EVENT_CACHE_KEY, JSON.stringify(cache));
-  } catch (e) {}
+  } catch (e) {
+    console.warn('[event-cache] save failed', { eventId, beforeLen, afterLen, error: e?.message });
+  }
 }
+
+/** Debug helper — call cacheInfo() in the devtools console to inspect state. */
+window.cacheInfo = function () {
+  let cache = [];
+  try { cache = JSON.parse(localStorage.getItem(EVENT_CACHE_KEY) || '[]'); } catch (e) {}
+  const totalBytes = (localStorage.getItem(EVENT_CACHE_KEY) || '').length;
+  console.table(cache.map(e => ({ key: e.key, compressedBytes: e.compressed.length })));
+  console.log(`Total cache: ${cache.length} entries, ${(totalBytes / 1024).toFixed(1)} KB stored`);
+  return cache.map(e => e.key);
+};
 
 async function loadFromEventCache(eventId) {
   try {
@@ -3177,8 +3202,7 @@ async function runBatch(batchItems) {
       const data = jsAnalyzePlayer(firstGame, 0, name);
       if (data) savePlayerToHistory(name, data);
     }
-    const firstMeta = deriveEventMeta();
-    saveToEventCache(`${firstMeta.event_date || 'unknown'}|${firstMeta.event_name || 'Game'}`, firstGame).catch(() => {});
+    await saveToEventCache(eventCacheId(firstGame), firstGame);
     setStatus('Importing history…', `Saved 1 of ${total}`, Math.round(1 / total * 100));
     startIdx = 1;
   }
@@ -3192,8 +3216,7 @@ async function runBatch(batchItems) {
       cachedNormalized = env;
       currentSessionIdx = 0;
       autoSaveTrackedPlayers(cachedNormalized);
-      const batchMeta = deriveEventMeta();
-      saveToEventCache(`${batchMeta.event_date || 'unknown'}|${batchMeta.event_name || 'Game'}`, cachedNormalized).catch(() => {});
+      await saveToEventCache(eventCacheId(cachedNormalized), cachedNormalized);
     } catch (e) {
       skipped++;
     }
