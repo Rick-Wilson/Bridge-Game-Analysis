@@ -1660,7 +1660,31 @@ function applyUploadResponse(data, opts) {
   document.getElementById('pbn-notice').classList.toggle('hidden', pbnHidden);
   renderSessionSelector();
   showNamesNotice(data);
-  switchView('players');
+  const focusName = consumePendingFocusPlayer();
+  if (focusName && data.players?.includes(focusName)) {
+    goToPlayer(focusName);
+  } else {
+    switchView('players');
+  }
+}
+
+const PENDING_FOCUS_KEY = 'bc-pending-focus-player';
+const PENDING_FOCUS_TTL_MS = 5 * 60 * 1000;
+
+function setPendingFocusPlayer(name) {
+  if (!name) return;
+  try { localStorage.setItem(PENDING_FOCUS_KEY, JSON.stringify({ name, ts: Date.now() })); } catch (e) {}
+}
+
+function consumePendingFocusPlayer() {
+  try {
+    const stored = localStorage.getItem(PENDING_FOCUS_KEY);
+    if (!stored) return null;
+    localStorage.removeItem(PENDING_FOCUS_KEY);
+    const { name, ts } = JSON.parse(stored);
+    if (!name || Date.now() - ts > PENDING_FOCUS_TTL_MS) return null;
+    return name;
+  } catch (e) { return null; }
 }
 
 /** Populate the session-selector dropdown and wire its change handler.
@@ -2645,26 +2669,31 @@ async function loadHistoryEvent(eventId, sourceUrl) {
   // Check synchronously first — window.open must happen before any await
   // or the browser treats it as an unprompted popup and blocks it.
   if (!eventCacheKeySet().has(eventId)) {
-    if (sourceUrl) window.open(sourceUrl + '#bc-analyze', '_blank');
-    else alert('This event is not cached. Re-extract it using the extension.');
+    if (sourceUrl) {
+      // Stash focus player so the new /analyze tab can land on them after extraction.
+      setPendingFocusPlayer(focusPlayer);
+      window.open(sourceUrl + '#bc-analyze', '_blank');
+    } else {
+      alert('This event is not cached. Re-extract it using the extension.');
+    }
     return;
   }
   const normalized = await loadFromEventCache(eventId);
   if (!normalized) {
     // Cache entry existed but decompression failed — fall back gracefully.
-    if (sourceUrl) window.open(sourceUrl + '#bc-analyze', '_blank');
-    else alert('Cache read failed. Re-extract it using the extension.');
+    if (sourceUrl) {
+      setPendingFocusPlayer(focusPlayer);
+      window.open(sourceUrl + '#bc-analyze', '_blank');
+    } else {
+      alert('Cache read failed. Re-extract it using the extension.');
+    }
     return;
   }
   enrichNormalized(normalized);
   const data = deriveUploadResponse(normalized);
   mergeNamesToStorage(data.player_acbl);
+  setPendingFocusPlayer(focusPlayer);
   applyUploadResponse(data, { hasPbn: true });
-  if (focusPlayer && data.players.includes(focusPlayer)) {
-    goToPlayer(focusPlayer);
-  } else {
-    switchView('players');
-  }
 }
 
 /** Convert strat integer (1-based) to letter: 1→A, 2→B, 3→C … */
