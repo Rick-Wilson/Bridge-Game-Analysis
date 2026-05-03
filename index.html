@@ -2810,18 +2810,78 @@ function renderHistory() {
   renderHistoryPlayer(sel.value);
 }
 
-function sparklineSvg(points, color) {
-  if (points.length < 2) return '';
-  const W = 480, H = 72, PAD = 8;
-  const minY = 0;
-  const maxY = Math.max(...points, 40);
-  const xs = points.map((_, i) => PAD + i * (W - 2 * PAD) / (points.length - 1));
-  const ys = points.map(v => H - PAD - (v - minY) / (maxY - minY || 1) * (H - 2 * PAD));
-  const polyPts = xs.map((x, i) => `${x.toFixed(1)},${ys[i].toFixed(1)}`).join(' ');
-  const dots = xs.map((x, i) => `<circle cx="${x.toFixed(1)}" cy="${ys[i].toFixed(1)}" r="3.5" fill="${color}"/>`).join('');
-  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">` +
-    `<polyline points="${polyPts}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linejoin="round"/>` +
-    dots + '</svg>';
+/** Combined player-history chart: stacked Auction/Play/Defense error bars
+ *  on the left Y-axis, MP% line on the right Y-axis. */
+function playerHistoryChartSvg(eventsWithPlayer, playerName) {
+  const n = eventsWithPlayer.length;
+  if (n === 0) return '';
+
+  const W = 560, H = 200;
+  const PAD_L = 36, PAD_R = 40, PAD_T = 10, PAD_B = 22;
+  const innerW = W - PAD_L - PAD_R;
+  const innerH = H - PAD_T - PAD_B;
+
+  const data = eventsWithPlayer.map(e => {
+    const p = e.players[playerName];
+    const total = p.boards || 1;
+    return {
+      auction: (p.Auction / total) * 100,
+      play:    (p.Play    / total) * 100,
+      defense: (p.Defense / total) * 100,
+      errorTotal: ((p.Auction + p.Play + p.Defense) / total) * 100,
+      mp: p.mp,
+    };
+  });
+
+  // Left axis: auto-scaled error %, min ceiling 30%, rounded up to next 10
+  const maxErr = Math.max(30, Math.ceil(Math.max(...data.map(d => d.errorTotal)) / 10) * 10);
+  const maxMp  = 100;
+
+  const xAt = i => PAD_L + (n === 1 ? innerW / 2 : i * innerW / (n - 1));
+  const yErrAt = pct => PAD_T + innerH - (pct / maxErr) * innerH;
+  const yMpAt  = pct => PAD_T + innerH - (pct / maxMp)  * innerH;
+
+  const barW = Math.min(28, n > 1 ? (innerW / (n - 1)) * 0.55 : 28);
+
+  const bars = data.map((d, i) => {
+    const x = xAt(i) - barW / 2;
+    const yA = yErrAt(d.auction);
+    const hA = (d.auction / maxErr) * innerH;
+    const yP = yErrAt(d.auction + d.play);
+    const hP = (d.play / maxErr) * innerH;
+    const yD = yErrAt(d.auction + d.play + d.defense);
+    const hD = (d.defense / maxErr) * innerH;
+    return `<rect x="${x.toFixed(1)}" y="${yA.toFixed(1)}" width="${barW.toFixed(1)}" height="${hA.toFixed(1)}" fill="var(--auction)"/>`
+         + `<rect x="${x.toFixed(1)}" y="${yP.toFixed(1)}" width="${barW.toFixed(1)}" height="${hP.toFixed(1)}" fill="var(--play)"/>`
+         + `<rect x="${x.toFixed(1)}" y="${yD.toFixed(1)}" width="${barW.toFixed(1)}" height="${hD.toFixed(1)}" fill="var(--defense)"/>`;
+  }).join('');
+
+  const mpPts = data.map((d, i) => `${xAt(i).toFixed(1)},${yMpAt(d.mp).toFixed(1)}`).join(' ');
+  const mpDots = data.map((d, i) =>
+    `<circle cx="${xAt(i).toFixed(1)}" cy="${yMpAt(d.mp).toFixed(1)}" r="3.5" fill="var(--good)" stroke="white" stroke-width="1.5"/>`
+  ).join('');
+
+  // Gridlines + left-axis ticks (error %)
+  const leftAxis = [0, maxErr / 2, maxErr].map(t => {
+    const y = yErrAt(t);
+    return `<line x1="${PAD_L}" y1="${y.toFixed(1)}" x2="${W - PAD_R}" y2="${y.toFixed(1)}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="2,2"/>`
+         + `<text x="${PAD_L - 4}" y="${(y + 3.5).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--text-muted)">${t}%</text>`;
+  }).join('');
+
+  // Right-axis ticks (MP %)
+  const rightAxis = [0, 50, 100].map(t => {
+    const y = yMpAt(t);
+    return `<text x="${W - PAD_R + 4}" y="${(y + 3.5).toFixed(1)}" text-anchor="start" font-size="10" fill="var(--good)">${t}%</text>`;
+  }).join('');
+
+  // 50% MP reference line (dashed green)
+  const y50 = yMpAt(50);
+  const ref50 = `<line x1="${PAD_L}" y1="${y50.toFixed(1)}" x2="${W - PAD_R}" y2="${y50.toFixed(1)}" stroke="var(--good)" stroke-width="0.5" stroke-dasharray="3,3" opacity="0.4"/>`;
+
+  const axisLabels = `<text x="${PAD_L}" y="${H - 6}" font-size="10" fill="var(--text-muted)">oldest</text>`
+                   + `<text x="${W - PAD_R}" y="${H - 6}" text-anchor="end" font-size="10" fill="var(--text-muted)">latest</text>`;
+
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;max-width:${W}px;height:${H}px">${leftAxis}${ref50}${bars}<polyline points="${mpPts}" fill="none" stroke="var(--good)" stroke-width="2.5" stroke-linejoin="round"/>${mpDots}${rightAxis}${axisLabels}</svg>`;
 }
 
 function renderHistoryPlayer(playerName) {
@@ -2839,15 +2899,7 @@ function renderHistoryPlayer(playerName) {
     return;
   }
 
-  // Error rate sparkline (Play + Defense + Auction as % of boards)
-  const errPts = eventsWithPlayer.map(e => {
-    const p = e.players[playerName];
-    return p.boards > 0 ? ((p.Play + p.Defense + p.Auction) / p.boards * 100) : 0;
-  });
-  const mpPts = eventsWithPlayer.map(e => e.players[playerName].mp);
-
-  const sparkErr = sparklineSvg(errPts, '#dc2626');
-  const sparkMp  = sparklineSvg(mpPts,  '#16a34a');
+  const chartSvg = playerHistoryChartSvg(eventsWithPlayer, playerName);
 
   const cachedKeys = eventCacheKeySet();
   const tableRows = [...eventsWithPlayer].reverse().map(e => {
@@ -2888,13 +2940,15 @@ function renderHistoryPlayer(playerName) {
 
   content.innerHTML = `
     <p class="history-player-header">${playerName} &mdash; ${eventsWithPlayer.length} event${eventsWithPlayer.length === 1 ? '' : 's'}</p>
-    ${sparkErr ? `<div class="history-sparkline">
-      <h4>Error rate over time (Play + Defense + Auction % of boards played)</h4>
-      ${sparkErr}
-    </div>` : ''}
-    ${sparkMp ? `<div class="history-sparkline">
-      <h4>Matchpoint % over time</h4>
-      ${sparkMp}
+    ${chartSvg ? `<div class="history-sparkline">
+      <h4>Error rate (left, % of boards) and matchpoint % (right) over time</h4>
+      ${chartSvg}
+      <div style="display:flex;gap:1.25rem;font-size:0.75rem;color:var(--text-muted);justify-content:center;margin-top:0.4rem;flex-wrap:wrap">
+        <span><span style="background:var(--auction);display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle"></span> Auction</span>
+        <span><span style="background:var(--play);display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle"></span> Play</span>
+        <span><span style="background:var(--defense);display:inline-block;width:12px;height:12px;border-radius:2px;vertical-align:middle"></span> Defense</span>
+        <span><span style="background:var(--good);display:inline-block;width:12px;height:12px;border-radius:50%;vertical-align:middle"></span> MP%</span>
+      </div>
     </div>` : ''}
     <div class="results-table">
       <table>
