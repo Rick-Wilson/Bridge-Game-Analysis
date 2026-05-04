@@ -276,6 +276,9 @@ tr.clickable-row:hover td { background: #e0e7ff; }
 
   <!-- Player results (no hand viewer here) -->
   <div id="player-results" class="hidden">
+    <div id="player-actions" style="display:flex;justify-content:flex-end;margin-bottom:0.5rem">
+      <button id="player-track-btn" class="btn btn-sm btn-outline" type="button"></button>
+    </div>
     <div id="player-summary" class="summary"></div>
     <div id="player-summary2" class="summary"></div>
     <div id="player-summary3" class="summary"></div>
@@ -1989,7 +1992,8 @@ async function selectPlayer(btn, name) {
     const game = await loadNormalized();
     const data = jsAnalyzePlayer(game, currentSessionIdx, name);
     if (!data) throw new Error(`Player '${name}' not found`);
-    try { savePlayerToHistory(name, data); } catch (e) {}
+    // Note: history save is now explicit via the Track button (or via
+    // autoSaveTrackedPlayers on game load for already-tracked players).
     renderPlayer(data);
     // Hide the player grid once results show
     document.getElementById('player-grid').classList.add('hidden');
@@ -2001,6 +2005,7 @@ function renderPlayer(data) {
   currentPlayerData = data;
   causeFilter = null;
   document.getElementById('player-results').classList.remove('hidden');
+  updateTrackButton();
   const mpColor = data.avg_matchpoint_pct >= 50 ? 'mp-good' : 'mp-bad';
   const partners = data.partners.map(p =>
     `<span class="clickable" onclick="goToPlayer('${esc(p)}')">${p}</span>`
@@ -2748,6 +2753,39 @@ function autoSaveTrackedPlayers(game) {
     const data = jsAnalyzePlayer(game, currentSessionIdx, name);
     if (data) savePlayerToHistory(name, data);
   }
+}
+
+/** A player is "tracked" iff they appear in any saved history event. */
+function isPlayerTracked(name) {
+  return getHistory().events.some(ev => ev.players[name]);
+}
+
+function trackCurrentPlayer() {
+  if (!currentPlayerName || !currentPlayerData) return;
+  savePlayerToHistory(currentPlayerName, currentPlayerData);
+  updateTrackButton();
+}
+
+function untrackPlayer(name) {
+  if (!confirm(`Stop tracking ${name}? This deletes ${name}'s records from every saved event.`)) return;
+  const h = getHistory();
+  for (const ev of h.events) delete ev.players[name];
+  h.events = h.events.filter(ev => Object.keys(ev.players).length > 0);
+  setHistory(h);
+  if (currentPlayerName === name) updateTrackButton();
+}
+
+function updateTrackButton() {
+  const btn = document.getElementById('player-track-btn');
+  if (!btn || !currentPlayerName) return;
+  const tracked = isPlayerTracked(currentPlayerName);
+  btn.textContent = tracked ? `★ Tracking ${currentPlayerName}` : `☆ Track ${currentPlayerName}`;
+  btn.title = tracked
+    ? 'Click to stop tracking and remove all saved history for this player'
+    : 'Add this player to tracking. New events will auto-save their analysis to history.';
+  btn.onclick = tracked
+    ? () => untrackPlayer(currentPlayerName)
+    : () => trackCurrentPlayer();
 }
 
 function savePlayerToHistory(playerName, data) {
