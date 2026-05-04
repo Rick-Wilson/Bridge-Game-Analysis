@@ -114,6 +114,11 @@ tr.clickable-row:hover td { background: #e0e7ff; }
 .bba-loading { color: var(--text-muted); font-size: 0.75rem; text-align: center; padding: 0.5rem; }
 
 .hand-viewer-frame { width: 100%; height: 500px; border: 1px solid var(--border); border-radius: var(--radius); }
+.viewer-tabs { display: flex; gap: 0.25rem; margin-bottom: 0.4rem; }
+.viewer-tab { padding: 0.3rem 0.85rem; font-size: 0.8rem; cursor: pointer; border: 1px solid var(--border); border-radius: 4px 4px 0 0; background: transparent; color: var(--text-muted); border-bottom: 1px solid transparent; margin-bottom: -1px; font-family: inherit; }
+.viewer-tab:hover { color: var(--text); }
+.viewer-tab.active { background: var(--surface); color: var(--text); font-weight: 500; border-bottom-color: var(--surface); }
+.viewer-tab[disabled] { cursor: not-allowed; opacity: 0.4; }
 
 /* Footer (matches bridge-classroom.com) */
 .footer { text-align: center; margin-top: 40px; padding-top: 24px; border-top: 0.5px solid var(--border); max-width: 1100px; margin-left: auto; margin-right: auto; padding-bottom: 24px; }
@@ -297,7 +302,11 @@ tr.clickable-row:hover td { background: #e0e7ff; }
   <div id="board-results" class="hidden">
     <div id="viewer-row" class="viewer-row hidden">
       <div class="viewer-col">
-        <iframe id="board-viewer" class="hand-viewer-frame" sandbox="allow-scripts allow-same-origin" allowfullscreen></iframe>
+        <div class="viewer-tabs">
+          <button class="viewer-tab active" data-viewer="bc" onclick="setViewerKind('bc')" type="button">Bridge Classroom</button>
+          <button class="viewer-tab" data-viewer="bbo" onclick="setViewerKind('bbo')" type="button">BBO</button>
+        </div>
+        <iframe id="board-viewer" class="hand-viewer-frame" sandbox="allow-scripts allow-same-origin allow-forms allow-popups" allowfullscreen></iframe>
       </div>
       <div id="side-panel" class="side-panel">
         <div id="dd-section"><div class="bba-loading">Loading DD analysis...</div></div>
@@ -2157,9 +2166,16 @@ function renderBoard(data) {
     }
   }
 
-  // Show viewer row if any result has a URL
-  const hasViewer = data.results.some(r => r.bbo_url);
+  // Show viewer row if either the BC viewer can render the deal or any
+  // result has a BBO URL. Default to BC when a deal is present.
+  const hasBcViewer = !!data.deal_info?.pbn;
+  const hasBboViewer = data.results.some(r => r.bbo_url);
+  const hasViewer = hasBcViewer || hasBboViewer;
   document.getElementById('viewer-row').classList.toggle('hidden', !hasViewer);
+  if (hasViewer && !hasBcViewer && currentViewerKind === 'bc') {
+    // Falls back to BBO when no deal is available.
+    setViewerKind('bbo');
+  }
   if (hasViewer) {
     setViewerRow(activeRowIdx);
     // Render par, fetch DD and BBA data
@@ -2223,10 +2239,69 @@ function clickBoardRow(idx) {
   }
 }
 
+// ---- Viewer tab (Bridge Classroom vs BBO handviewer) ----
+
+const BC_VIEWER_DEFAULT = 'https://bridge-classroom.com/solo-practice-app/#/bidding-practice';
+let currentViewerKind = 'bc'; // 'bc' or 'bbo' — sticks across rows + boards
+
+/** Allow a localhost dev URL via:
+ *    localStorage.setItem('bc-viewer-base', 'http://localhost:5173/solo-practice-app/#/bidding-practice')
+ *  Clear with: localStorage.removeItem('bc-viewer-base') */
+function bcViewerBase() {
+  try {
+    const override = localStorage.getItem('bc-viewer-base');
+    if (override) return override;
+  } catch (e) {}
+  return BC_VIEWER_DEFAULT;
+}
+
+/** Convert dealInfo.pbn ("S:hand_at_S hand_W hand_N hand_E") to the
+ *  Bridge Classroom convention ("N:hand_N hand_E hand_S hand_W"). */
+function pbnToNESW(pbn) {
+  if (!pbn || !pbn.includes(':')) return null;
+  const [prefix, handsStr] = pbn.split(':');
+  const dealer = prefix.trim();
+  const hands = handsStr.trim().split(/\s+/);
+  if (hands.length !== 4) return null;
+  const order = { N: 0, E: 1, S: 2, W: 3 };
+  const dealerIdx = order[dealer];
+  if (dealerIdx == null) return null;
+  const reordered = ['N','E','S','W'].map(d => hands[(order[d] - dealerIdx + 4) % 4]);
+  return `N:${reordered.join(' ')}`;
+}
+
+function bcViewerUrl(dealInfo) {
+  if (!dealInfo?.pbn) return null;
+  const pbnNESW = pbnToNESW(dealInfo.pbn);
+  if (!pbnNESW) return null;
+  const params = new URLSearchParams({
+    pbn: pbnNESW,
+    dealer: dealInfo.dealer || 'N',
+    vul: dealInfo.vulnerability || 'None',
+  });
+  return `${bcViewerBase()}?${params.toString()}`;
+}
+
+function setViewerKind(kind) {
+  currentViewerKind = kind;
+  document.querySelectorAll('.viewer-tab').forEach(b =>
+    b.classList.toggle('active', b.dataset.viewer === kind));
+  setViewerRow(activeRowIdx);
+}
+
 function setViewerRow(idx) {
-  const r = currentBoardData.results[idx];
+  const r = currentBoardData?.results?.[idx];
   const viewer = document.getElementById('board-viewer');
-  if (r && r.bbo_url) { viewer.src = r.bbo_url; }
+  if (!viewer) return;
+  if (currentViewerKind === 'bc') {
+    const url = bcViewerUrl(currentBoardData?.deal_info);
+    if (url) viewer.src = url;
+  } else if (r && r.bbo_url) {
+    viewer.src = r.bbo_url;
+  }
+  // Disable BBO tab when no BBO URL exists for the active row.
+  const bboTab = document.querySelector('.viewer-tab[data-viewer="bbo"]');
+  if (bboTab) bboTab.disabled = !r?.bbo_url;
 }
 
 // ==================== DD Table ====================
