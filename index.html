@@ -73,6 +73,12 @@ tr:hover td { background: #f1f5f9; }
 .contract-down { color: var(--play); font-weight: 500; }
 .mp-good { color: var(--good); font-weight: 500; }
 .mp-bad { color: var(--play); font-weight: 500; }
+/* MP% bands: 30s salmon bg, 40s red, 50s blue, 60s green, 70s+ green on gold */
+.mp-30s { background: rgba(250, 128, 114, 0.22); }
+.mp-40s { color: var(--play); font-weight: 500; }
+.mp-50s { color: var(--lucky); font-weight: 500; }
+.mp-60s { color: var(--good); font-weight: 500; }
+.mp-70s { color: var(--good); font-weight: 600; background: rgba(255, 215, 0, 0.30); }
 .suit-red { color: #dc2626; } .suit-black { color: #212529; }
 .clickable { color: var(--primary); text-decoration: none; font-weight: 500; cursor: pointer; }
 .clickable:hover { text-decoration: underline; }
@@ -2006,7 +2012,7 @@ function renderPlayer(data) {
   causeFilter = null;
   document.getElementById('player-results').classList.remove('hidden');
   updateTrackButton();
-  const mpColor = data.avg_matchpoint_pct >= 50 ? 'mp-good' : 'mp-bad';
+  const mpColor = mpBandClass(data.avg_matchpoint_pct);
   const partners = data.partners.map(p =>
     `<span class="clickable" onclick="goToPlayer('${esc(p)}')">${p}</span>`
   ).join(', ');
@@ -2540,8 +2546,26 @@ function fmtContract(str) {
   return str.includes('-') ? `<span class="contract-down">${full}</span>` : `<span class="contract-made">${full}</span>`;
 }
 function fmtField(str, matched) { return str ? (matched ? '=' : '') + suitify(str) : ''; }
+function mpBandClass(pct) {
+  if (pct == null) return '';
+  if (pct >= 70) return 'mp-70s';
+  if (pct >= 60) return 'mp-60s';
+  if (pct >= 50) return 'mp-50s';
+  if (pct >= 40) return 'mp-40s';
+  if (pct >= 30) return 'mp-30s';
+  return '';
+}
+
+/** Inline background tint for an error-rate cell. None below 10%, scales
+ *  linearly from there to a max alpha at 60%. */
+function errorTintStyle(pct) {
+  if (pct == null || pct < 10) return '';
+  const alpha = Math.min(0.35, ((pct - 10) / 50) * 0.35);
+  return `background: rgba(220, 38, 38, ${alpha.toFixed(2)})`;
+}
+
 function fmtMp(pct) {
-  const cls = pct >= 50 ? 'mp-good' : 'mp-bad';
+  const cls = mpBandClass(pct);
   const bar = pct >= 60 ? 'var(--good)' : pct >= 40 ? '#eab308' : 'var(--play)';
   return `<span class="${cls}">${pct.toFixed(1)}%</span> <span class="mp-bar"><span class="mp-fill" style="width:${pct}%;background:${bar}"></span></span>`;
 }
@@ -2994,8 +3018,10 @@ function renderHistoryPlayer(playerName) {
   const tableRows = [...eventsWithPlayer].reverse().map(e => {
     const p = e.players[playerName];
     const errors = p.Play + p.Defense + p.Auction;
-    const errorPct = p.boards > 0 ? (errors / p.boards * 100).toFixed(0) : '-';
-    const mpColor = p.mp >= 50 ? 'mp-good' : 'mp-bad';
+    const errorRate = p.boards > 0 ? (errors / p.boards * 100) : null;
+    const errorPct = errorRate != null ? errorRate.toFixed(0) : '-';
+    const errorStyle = errorTintStyle(errorRate);
+    const mpColor = mpBandClass(p.mp);
     const isCached = cachedKeys.has(e.id);
     const cacheIcon = isCached ? ` <span style="color:var(--good);font-size:0.8em" title="Cached locally — click name to load instantly">⟳</span>` : '';
     const reExtractLink = e.source_url
@@ -3015,7 +3041,7 @@ function renderHistoryPlayer(playerName) {
       <td>${eventLink}</td>
       <td class="text-right">${p.boards}</td>
       <td class="text-right ${mpColor}">${p.mp.toFixed(1)}%</td>
-      <td class="text-right">${errorPct}%</td>
+      <td class="text-right" style="${errorStyle}">${errorPct}%</td>
       <td class="text-right">${stratCell}</td>
       <td class="text-right">${mpAwardCell}</td>
       <td>${causeBarCell(p.Good, p.boards, 'Good', colMax.Good)}</td>
