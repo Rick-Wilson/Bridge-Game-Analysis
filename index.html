@@ -2241,10 +2241,11 @@ function clickBoardRow(idx) {
 
 // ---- Viewer tab (Bridge Classroom vs BBO handviewer) ----
 
-const BC_VIEWER_DEFAULT = 'https://bridge-classroom.com/solo-practice-app/#/bidding-practice';
 let currentViewerKind = 'bc'; // 'bc' or 'bbo' — sticks across rows + boards
 
-/** Allow a localhost dev URL via:
+/** Mirror the current TLD: page on .org uses bridge-classroom.org viewer,
+ *  .com uses .com. Falls back to .com for everything else (localhost,
+ *  preview deploys, etc.). Override for local dev via:
  *    localStorage.setItem('bc-viewer-base', 'http://localhost:5173/solo-practice-app/#/bidding-practice')
  *  Clear with: localStorage.removeItem('bc-viewer-base') */
 function bcViewerBase() {
@@ -2252,7 +2253,8 @@ function bcViewerBase() {
     const override = localStorage.getItem('bc-viewer-base');
     if (override) return override;
   } catch (e) {}
-  return BC_VIEWER_DEFAULT;
+  const tld = window.location.hostname.endsWith('.org') ? 'org' : 'com';
+  return `https://bridge-classroom.${tld}/solo-practice-app/#/bidding-practice`;
 }
 
 /** Convert dealInfo.pbn ("S:hand_at_S hand_W hand_N hand_E") to the
