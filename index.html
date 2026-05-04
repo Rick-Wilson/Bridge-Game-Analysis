@@ -2814,13 +2814,14 @@ function renderHistory() {
   renderHistoryPlayer(sel.value);
 }
 
-/** History-table cell: horizontal bar fill scaled to count/boards (capped 100%),
- *  with the count overlaid as text. Lets the eye scan a column for tall vs short
- *  bars instead of reading every white-on-color number. */
-function causeBarCell(count, boards, cause) {
-  const pct = boards > 0 ? Math.min(100, (count / boards) * 100) : 0;
+/** History-table cell: horizontal bar fill scaled to count/columnMax so
+ *  bars are directly comparable down a column (the row with the highest
+ *  value in this cause fills the cell, others scale proportionally). */
+function causeBarCell(count, boards, cause, columnMax) {
+  const pct = columnMax > 0 ? (count / columnMax) * 100 : 0;
   const numCls = count === 0 ? 'cause-bar-num zero' : 'cause-bar-num';
-  return `<div class="cause-bar" title="${count} of ${boards} boards (${pct.toFixed(0)}%)">`
+  const ofBoards = boards > 0 ? ` (${((count / boards) * 100).toFixed(0)}% of ${boards})` : '';
+  return `<div class="cause-bar" title="${count}${ofBoards}">`
        + `<div class="cause-bar-fill cause-${cause}" style="width:${pct.toFixed(1)}%"></div>`
        + `<span class="${numCls}">${count}</span></div>`;
 }
@@ -2917,6 +2918,11 @@ function renderHistoryPlayer(playerName) {
   const chartSvg = playerHistoryChartSvg(eventsWithPlayer, playerName);
 
   const cachedKeys = eventCacheKeySet();
+  // Per-column max across all events so bars are comparable within a column.
+  const colMax = ['Good','Play','Defense','Auction','Lucky','Unlucky'].reduce((acc, c) => {
+    acc[c] = Math.max(0, ...eventsWithPlayer.map(e => e.players[playerName][c] || 0));
+    return acc;
+  }, {});
   const tableRows = [...eventsWithPlayer].reverse().map(e => {
     const p = e.players[playerName];
     const errors = p.Play + p.Defense + p.Auction;
@@ -2944,12 +2950,12 @@ function renderHistoryPlayer(playerName) {
       <td class="text-right">${errorPct}%</td>
       <td class="text-right">${stratCell}</td>
       <td class="text-right">${mpAwardCell}</td>
-      <td>${causeBarCell(p.Good, p.boards, 'Good')}</td>
-      <td>${causeBarCell(p.Play, p.boards, 'Play')}</td>
-      <td>${causeBarCell(p.Defense, p.boards, 'Defense')}</td>
-      <td>${causeBarCell(p.Auction, p.boards, 'Auction')}</td>
-      <td>${causeBarCell(p.Lucky, p.boards, 'Lucky')}</td>
-      <td>${causeBarCell(p.Unlucky, p.boards, 'Unlucky')}</td>
+      <td>${causeBarCell(p.Good, p.boards, 'Good', colMax.Good)}</td>
+      <td>${causeBarCell(p.Play, p.boards, 'Play', colMax.Play)}</td>
+      <td>${causeBarCell(p.Defense, p.boards, 'Defense', colMax.Defense)}</td>
+      <td>${causeBarCell(p.Auction, p.boards, 'Auction', colMax.Auction)}</td>
+      <td>${causeBarCell(p.Lucky, p.boards, 'Lucky', colMax.Lucky)}</td>
+      <td>${causeBarCell(p.Unlucky, p.boards, 'Unlucky', colMax.Unlucky)}</td>
     </tr>`;
   }).join('');
 
