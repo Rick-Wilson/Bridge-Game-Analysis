@@ -2951,9 +2951,9 @@ function renderHistoryPlayer(playerName) {
       <td class="text-right">${stratCell}</td>
       <td class="text-right">${mpAwardCell}</td>
       <td>${causeBarCell(p.Good, p.boards, 'Good', colMax.Good)}</td>
+      <td>${causeBarCell(p.Auction, p.boards, 'Auction', colMax.Auction)}</td>
       <td>${causeBarCell(p.Play, p.boards, 'Play', colMax.Play)}</td>
       <td>${causeBarCell(p.Defense, p.boards, 'Defense', colMax.Defense)}</td>
-      <td>${causeBarCell(p.Auction, p.boards, 'Auction', colMax.Auction)}</td>
       <td>${causeBarCell(p.Lucky, p.boards, 'Lucky', colMax.Lucky)}</td>
       <td>${causeBarCell(p.Unlucky, p.boards, 'Unlucky', colMax.Unlucky)}</td>
     </tr>`;
@@ -2977,8 +2977,8 @@ function renderHistoryPlayer(playerName) {
           <th>Date</th><th>Event</th><th class="text-right">Boards</th>
           <th class="text-right">MP%</th><th class="text-right">Error%</th>
           <th class="text-right">Strat</th><th class="text-right">MPs</th>
-          <th class="text-right">Good</th><th class="text-right">Play</th>
-          <th class="text-right">Defense</th><th class="text-right">Auction</th>
+          <th class="text-right">Good</th><th class="text-right">Auction</th>
+          <th class="text-right">Play</th><th class="text-right">Defense</th>
           <th class="text-right">Lucky</th><th class="text-right">Unlucky</th>
         </tr></thead>
         <tbody>${tableRows}</tbody>
