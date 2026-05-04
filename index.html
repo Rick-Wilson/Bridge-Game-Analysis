@@ -2788,6 +2788,30 @@ function clearHistory() {
   renderHistory();
 }
 
+/** Remove a single player's record from one event in history. If the event
+ *  has no other tracked players left, drop the event entirely. Also drops
+ *  the cached normalized JSON for the event so a corrupted cache entry is
+ *  evicted in one shot. */
+function removeHistoryEntry(playerName, eventId) {
+  if (!confirm(`Remove ${playerName}'s record for "${eventId}"?\n\nThis also clears that event from the local cache.`)) return;
+  const h = getHistory();
+  const ev = h.events.find(e => e.id === eventId);
+  if (ev) {
+    delete ev.players[playerName];
+    if (Object.keys(ev.players).length === 0) {
+      h.events = h.events.filter(e => e.id !== eventId);
+    }
+    setHistory(h);
+  }
+  // Evict cache entry too, in case it's the source of the bad data.
+  try {
+    const cache = JSON.parse(localStorage.getItem(EVENT_CACHE_KEY) || '[]')
+      .filter(e => e.key !== eventId);
+    localStorage.setItem(EVENT_CACHE_KEY, JSON.stringify(cache));
+  } catch (e) {}
+  renderHistory();
+}
+
 function renderHistory() {
   const h = getHistory();
   const sel = document.getElementById('history-player-select');
@@ -2962,6 +2986,7 @@ function renderHistoryPlayer(playerName) {
       <td>${causeBarCell(p.Defense, p.boards, 'Defense', colMax.Defense)}</td>
       <td>${causeBarCell(p.Lucky, p.boards, 'Lucky', colMax.Lucky)}</td>
       <td>${causeBarCell(p.Unlucky, p.boards, 'Unlucky', colMax.Unlucky)}</td>
+      <td><button class="btn btn-sm" style="background:none;color:var(--text-muted);padding:0 0.4rem;font-size:1rem;line-height:1" title="Remove this entry from history" onclick="removeHistoryEntry(${JSON.stringify(playerName).replace(/"/g, '&quot;')}, ${JSON.stringify(e.id).replace(/"/g, '&quot;')})">×</button></td>
     </tr>`;
   }).join('');
 
@@ -2986,6 +3011,7 @@ function renderHistoryPlayer(playerName) {
           <th class="text-right">Good</th><th class="text-right">Auction</th>
           <th class="text-right">Play</th><th class="text-right">Defense</th>
           <th class="text-right">Lucky</th><th class="text-right">Unlucky</th>
+          <th></th>
         </tr></thead>
         <tbody>${tableRows}</tbody>
       </table>
