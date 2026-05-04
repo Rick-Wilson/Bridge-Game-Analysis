@@ -157,6 +157,10 @@ tr.clickable-row:hover td { background: #e0e7ff; }
 .history-empty { color: var(--text-muted); font-size: 0.875rem; padding: 2rem; text-align: center; }
 .history-player-header { font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; }
 .cause-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; vertical-align: middle; margin-right: 2px; }
+.cause-bar { position: relative; width: 100%; min-width: 38px; height: 18px; background: rgba(0,0,0,0.05); border-radius: 3px; overflow: hidden; }
+.cause-bar-fill { position: absolute; top: 0; bottom: 0; left: 0; opacity: 0.55; }
+.cause-bar-num { position: relative; display: block; text-align: center; font-size: 0.78rem; font-weight: 600; line-height: 18px; color: var(--text); font-variant-numeric: tabular-nums; }
+.cause-bar-num.zero { color: var(--text-muted); font-weight: 400; }
 
 @media (max-width: 640px) {
   .container { padding: 0.5rem; }
@@ -2810,6 +2814,17 @@ function renderHistory() {
   renderHistoryPlayer(sel.value);
 }
 
+/** History-table cell: horizontal bar fill scaled to count/boards (capped 100%),
+ *  with the count overlaid as text. Lets the eye scan a column for tall vs short
+ *  bars instead of reading every white-on-color number. */
+function causeBarCell(count, boards, cause) {
+  const pct = boards > 0 ? Math.min(100, (count / boards) * 100) : 0;
+  const numCls = count === 0 ? 'cause-bar-num zero' : 'cause-bar-num';
+  return `<div class="cause-bar" title="${count} of ${boards} boards (${pct.toFixed(0)}%)">`
+       + `<div class="cause-bar-fill cause-${cause}" style="width:${pct.toFixed(1)}%"></div>`
+       + `<span class="${numCls}">${count}</span></div>`;
+}
+
 /** Combined player-history chart: stacked Auction/Play/Defense error bars
  *  on the left Y-axis, MP% line on the right Y-axis. */
 function playerHistoryChartSvg(eventsWithPlayer, playerName) {
@@ -2929,12 +2944,12 @@ function renderHistoryPlayer(playerName) {
       <td class="text-right">${errorPct}%</td>
       <td class="text-right">${stratCell}</td>
       <td class="text-right">${mpAwardCell}</td>
-      <td class="text-right"><span class="cause cause-Good">${p.Good}</span></td>
-      <td class="text-right"><span class="cause cause-Lucky">${p.Lucky}</span></td>
-      <td class="text-right"><span class="cause cause-Play">${p.Play}</span></td>
-      <td class="text-right"><span class="cause cause-Defense">${p.Defense}</span></td>
-      <td class="text-right"><span class="cause cause-Auction">${p.Auction}</span></td>
-      <td class="text-right"><span class="cause cause-Unlucky">${p.Unlucky}</span></td>
+      <td>${causeBarCell(p.Good, p.boards, 'Good')}</td>
+      <td>${causeBarCell(p.Play, p.boards, 'Play')}</td>
+      <td>${causeBarCell(p.Defense, p.boards, 'Defense')}</td>
+      <td>${causeBarCell(p.Auction, p.boards, 'Auction')}</td>
+      <td>${causeBarCell(p.Lucky, p.boards, 'Lucky')}</td>
+      <td>${causeBarCell(p.Unlucky, p.boards, 'Unlucky')}</td>
     </tr>`;
   }).join('');
 
@@ -2956,9 +2971,9 @@ function renderHistoryPlayer(playerName) {
           <th>Date</th><th>Event</th><th class="text-right">Boards</th>
           <th class="text-right">MP%</th><th class="text-right">Error%</th>
           <th class="text-right">Strat</th><th class="text-right">MPs</th>
-          <th class="text-right">Good</th><th class="text-right">Lucky</th>
-          <th class="text-right">Play</th><th class="text-right">Defense</th>
-          <th class="text-right">Auction</th><th class="text-right">Unlucky</th>
+          <th class="text-right">Good</th><th class="text-right">Play</th>
+          <th class="text-right">Defense</th><th class="text-right">Auction</th>
+          <th class="text-right">Lucky</th><th class="text-right">Unlucky</th>
         </tr></thead>
         <tbody>${tableRows}</tbody>
       </table>
