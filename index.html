@@ -2806,10 +2806,16 @@ function renderHistory() {
   }
   const allPlayers = [...playerSet].sort();
 
-  // Rebuild select, preserving current selection if valid
+  // Rebuild select. Prefer the currently-viewed player so that switching
+  // to History from a player's analysis lands on their history; fall back
+  // to the previous dropdown value, then the first player alphabetically.
   const prev = sel.value;
   sel.innerHTML = allPlayers.map(n => `<option value="${esc(n)}">${n}</option>`).join('');
-  if (prev && allPlayers.includes(prev)) sel.value = prev;
+  if (currentPlayerName && allPlayers.includes(currentPlayerName)) {
+    sel.value = currentPlayerName;
+  } else if (prev && allPlayers.includes(prev)) {
+    sel.value = prev;
+  }
 
   renderHistoryPlayer(sel.value);
 }
