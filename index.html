@@ -1953,9 +1953,12 @@ function switchView(view) {
     document.getElementById('player-grid').classList.add('hidden');
     document.getElementById('history-view').classList.add('hidden');
     showBoardGrid();
-    // Default to first board if none is selected yet
+    // Default to first board if none is selected yet. Pass keepPlayer=true
+    // so currentPlayerName survives — the per-board row highlight (and the
+    // ← Player back button) stay correct when arriving here from the player
+    // view, including via the cause-filter stat buttons.
     if (!currentBoard && cachedBoards.length) {
-      selectBoard(null, cachedBoards[0]);
+      selectBoard(null, cachedBoards[0], true);
     }
   }
 }
