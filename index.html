@@ -2272,7 +2272,7 @@ function pbnToNESW(pbn) {
   return `N:${reordered.join(' ')}`;
 }
 
-function bcViewerUrl(dealInfo) {
+function bcViewerUrl(dealInfo, seat) {
   if (!dealInfo?.pbn) return null;
   const pbnNESW = pbnToNESW(dealInfo.pbn);
   if (!pbnNESW) return null;
@@ -2281,7 +2281,22 @@ function bcViewerUrl(dealInfo) {
     dealer: dealInfo.dealer || 'N',
     vul: dealInfo.vulnerability || 'None',
   });
+  if (seat) params.set('seat', seat);
   return `${bcViewerBase()}?${params.toString()}`;
+}
+
+/** Which seat (N/S/E/W) the named player sat in for this result row, or
+ *  null when the player isn't in the row or no name is given. Mirrors the
+ *  ns_pair[0]=N, ns_pair[1]=S, ew_pair[0]=W, ew_pair[1]=E mapping the
+ *  analyzer uses elsewhere (verified via declarer_name lookup at the
+ *  jsAnalyzeBoard build-result site). */
+function playerSeatInResult(result, name) {
+  if (!result || !name) return null;
+  if (result.ns_player1 === name) return 'N';
+  if (result.ns_player2 === name) return 'S';
+  if (result.ew_player1 === name) return 'W';
+  if (result.ew_player2 === name) return 'E';
+  return null;
 }
 
 function setViewerKind(kind) {
@@ -2296,7 +2311,8 @@ function setViewerRow(idx) {
   const viewer = document.getElementById('board-viewer');
   if (!viewer) return;
   if (currentViewerKind === 'bc') {
-    const url = bcViewerUrl(currentBoardData?.deal_info);
+    const seat = playerSeatInResult(r, currentPlayerName);
+    const url = bcViewerUrl(currentBoardData?.deal_info, seat);
     if (url) viewer.src = url;
   } else if (r && r.bbo_url) {
     viewer.src = r.bbo_url;
